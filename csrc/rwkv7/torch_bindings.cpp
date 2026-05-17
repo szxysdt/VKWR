@@ -33,7 +33,7 @@ void spmv_forward(int64_t D, int64_t C,
     cuda_spmv_forward(D, C, vec.data_ptr<F>(), mat.data_ptr<F>(), out.data_ptr<F>());
 }
 
-TORCH_LIBRARY(vkwr_state, m) {
+TORCH_LIBRARY(vkwr_rwkv7, m) {
     m.def("forward_seq(int B, int T, int C, int H, "
           "Tensor(a!) state, Tensor r, Tensor w, Tensor k, Tensor v, "
           "Tensor a, Tensor b, Tensor(a!) y, Tensor(a!) elapsed_t) -> ()");
@@ -49,4 +49,4 @@ TORCH_LIBRARY(vkwr_state, m) {
     m.impl("spmv_forward", c10::kCUDA, &spmv_forward);
 }
 
-REGISTER_EXTENSION(_state_C)
+REGISTER_EXTENSION(_rwkv7_C)

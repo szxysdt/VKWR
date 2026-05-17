@@ -1,7 +1,7 @@
 import pytest
 import torch
 from pathlib import Path
-from vkwr._ops.state_ops import state_fwd_seq, state_fwd_one, spmv_forward, HEAD_SIZE
+from vkwr._ops.rwkv7_ops import rwkv7_fwd_seq, rwkv7_fwd_one, spmv_forward, HEAD_SIZE
 
 MONKEY_PATCH_DIR = Path(__file__).parent.parent.parent / "third_party" / "ops" / "monkey_patch"
 
@@ -100,7 +100,7 @@ def test_rwkv7_one_op_monkey_patch():
         expected_y = data["y"].reshape(B, C).cuda()
         expected_state_after = _reshape_state(data["state_after"]).cuda()
         state_in_clone = state_in.clone()
-        y = state_fwd_one(B, C, state_in_clone, r, w, k, v, a, b, elapsed_t)
+        y = rwkv7_fwd_one(B, C, state_in_clone, r, w, k, v, a, b, elapsed_t)
         return y, state_in_clone, expected_y, expected_state_after
 
     _test_with_tolerances("rwkv7_one_op", _get_one_files(), compute_fn)
@@ -122,7 +122,7 @@ def test_rwkv7_seq_op_monkey_patch():
         expected_y = data["y"].reshape(B, T, C).cuda()
         expected_state_after = _reshape_state(data["state_after"]).cuda()
         state_in_clone = state_in.clone()
-        y = state_fwd_seq(B, T, C, state_in_clone, r, w, k, v, a, b, elapsed_t)
+        y = rwkv7_fwd_seq(B, T, C, state_in_clone, r, w, k, v, a, b, elapsed_t)
         return y, state_in_clone, expected_y, expected_state_after
 
     _test_with_tolerances("rwkv7_seq_op", _get_seq_files(), compute_fn)
