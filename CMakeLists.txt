@@ -23,22 +23,12 @@ find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 # so there is no need to call enable_language(CUDA) explicitly.
 find_package(Torch REQUIRED)
 
-# Phase 1: RWKV MM core
+# Phase 1: RWKV7
 add_vkwr_extension(
-    _rwkv_C
+    _rwkv7_C
     SOURCES
-        csrc/rwkv/torch_bindings.cpp
-        csrc/rwkv/wkv_ops.cu
-        csrc/rwkv/gemm_ops.cu
-        csrc/rwkv/cublas_ops.cu
-)
-
-# Phase 2: RWKV7 SSM
-add_vkwr_extension(
-    _state_C
-    SOURCES
-        csrc/state/torch_bindings.cpp
-        csrc/state/state_fwd_fp16.cu
+        csrc/rwkv7/torch_bindings.cpp
+        csrc/rwkv7/state_fwd_fp16.cu
     DEFINITIONS _N_=64 ENABLE_L2_PREFETCH=0
 )
 

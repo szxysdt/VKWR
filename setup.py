@@ -85,7 +85,7 @@ class CMakeBuild(build_ext):
 
 
 ext_modules = []
-for name in ["_rwkv_C", "_state_C", "_sampling_C"]:
+for name in ["_rwkv7_C", "_sampling_C"]:
     ext_modules.append(Extension(f"vkwr.{name}", sources=[]))
 
 
