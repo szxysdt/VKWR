@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel", "cmake>=3.22", "ninja>=1.11"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vkwr"
+version = "0.1.0"
+description = "A high-concurrency pure SSM inference engine"
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.10,<3.15"
+dependencies = ["torch==2.11.0", "numpy==2.2.6", "ninja"]
+
+[project.scripts]
+vkwr = "vkwr.entrypoints.__main__:main"
+
+
+[project.optional-dependencies]
+test = ["pytest>=7.0", "pytest-cov"]
+dev = ["ruff>=0.4.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["vkwr*"]
+exclude = ["tests*", "third_party*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 160
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
