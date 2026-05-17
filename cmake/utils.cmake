@@ -23,7 +23,7 @@ function(add_vkwr_extension ext_name)
             CUDA_SEPARABLE_COMPILATION ON
         )
         target_compile_options(${ext_name} PRIVATE
-            $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math -O3 --extra-device-vectorization>
+            $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math -O3 --extra-device-vectorization -Xptxas -O3>
         )
     endif()
 
