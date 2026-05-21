@@ -1,6 +1,6 @@
 # VKWR
 
-Work in progress. A high-concurrency pure SSM inference engine for RWKV models.
+Work in progress. A high-performance inference engine for the RWKV linear language model.
 
 ---
 

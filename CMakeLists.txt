@@ -39,3 +39,47 @@ add_vkwr_extension(
         csrc/sampling/torch_bindings.cpp
         csrc/sampling/sampling.cu
 )
+
+# v1-1: WKV core (fp16 + fp32) + advance_i32
+add_vkwr_extension(
+    _v1_wkv_C
+    SOURCES
+        csrc/v1/wkv/torch_bindings.cpp
+        csrc/v1/wkv/wkv_fp16_v2.cu
+        csrc/v1/wkv/wkv_fp32_v2.cu
+        csrc/v1/wkv/advance_i32_ops.cu
+    DEFINITIONS _IO_FP16_
+)
+
+# v1-2: Linear (needs cuBLAS + cuBLASLt)
+add_vkwr_extension(
+    _v1_linear_C
+    SOURCES
+        csrc/v1/linear/torch_bindings.cpp
+        csrc/v1/linear/linear_ops.cu
+    LINK_LIBRARIES cublas cublasLt
+)
+
+# v1-3: LayerNorm + Add+LN fusion
+add_vkwr_extension(
+    _v1_norm_C
+    SOURCES
+        csrc/v1/norm/torch_bindings.cpp
+        csrc/v1/norm/norm_ops.cu
+)
+
+# v1-4: TMIX + CMIX + Activation
+add_vkwr_extension(
+    _v1_mix_C
+    SOURCES
+        csrc/v1/mix/torch_bindings.cpp
+        csrc/v1/mix/mix_ops.cu
+)
+
+# v1-5: Low-Rank fused (pure CUDA kernels, no cuBLAS needed)
+add_vkwr_extension(
+    _v1_rank_C
+    SOURCES
+        csrc/v1/rank/torch_bindings.cpp
+        csrc/v1/rank/rank_ops.cu
+)
