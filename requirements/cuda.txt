@@ -1,0 +1,5 @@
+# Common dependencies
+-r common.txt
+
+# Dependencies for NVIDIA GPUs
+torch==2.11.0
