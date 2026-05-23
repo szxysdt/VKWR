@@ -30,7 +30,7 @@ from vkwr._ops.v1.v1_wkv_ops import (
 
 def _make_fp16_state(B, C):
     H = C // HEAD_SIZE
-    state = torch.zeros((B, C, HEAD_SIZE), dtype=torch.float16, device="cuda")
+    state = torch.zeros((B, H, HEAD_SIZE, HEAD_SIZE), dtype=torch.float16, device="cuda")
     return state, H
 
 

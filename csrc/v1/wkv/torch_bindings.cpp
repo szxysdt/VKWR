@@ -29,8 +29,8 @@ void check_wkv_fp16_inputs(
               r.sizes() == v.sizes() && r.sizes() == a.sizes() &&
               r.sizes() == b.sizes(),
               "r,w,k,v,a,b shape mismatch");
-  TORCH_CHECK(state.dim() == 3 && state.size(0) == B && state.size(1) == C && state.size(2) == 64,
-              "state must have shape [B,C,64]");
+  TORCH_CHECK(state.dim() == 4 && state.size(0) == B && state.size(1) == H && state.size(2) == 64 && state.size(3) == 64,
+              "state must have shape [B,H,64,64]");
   TORCH_CHECK(state.scalar_type() == torch::kFloat16, "state must be fp16");
   TORCH_CHECK(state.is_cuda() && state.is_contiguous(), "state must be CUDA contiguous");
 }
@@ -52,8 +52,8 @@ void check_wkv_one_fp16_inputs(
               r.sizes() == v.sizes() && r.sizes() == a.sizes() &&
               r.sizes() == b.sizes(),
               "r,w,k,v,a,b shape mismatch");
-  TORCH_CHECK(state.dim() == 3 && state.size(0) == B && state.size(1) == C && state.size(2) == 64,
-              "state must have shape [B,C,64]");
+  TORCH_CHECK(state.dim() == 4 && state.size(0) == B && state.size(1) == H && state.size(2) == 64 && state.size(3) == 64,
+              "state must have shape [B,H,64,64]");
   TORCH_CHECK(state.scalar_type() == torch::kFloat16, "state must be fp16");
   TORCH_CHECK(state.is_cuda() && state.is_contiguous(), "state must be CUDA contiguous");
 }
