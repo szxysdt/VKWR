@@ -5,8 +5,8 @@ from vkwr import _v1_linear_C
 
 @torch.library.register_fake("vkwr_v1_linear::linear_f16")
 def _(x, weight):
-    N = weight.shape[1]
-    out_sizes = list(x.shape[:-1]) + [N]
+    K = weight.shape[0]
+    out_sizes = list(x.shape[:-1]) + [K]
     return torch.empty(out_sizes, dtype=x.dtype, device=x.device)
 
 
