@@ -1,26 +1,27 @@
 import pytest
 import torch
+
 from vkwr._ops.v1.v1_mix_ops import (
-    tmix_mix6,
-    tmix_mix6_cfg,
-    tmix_mix6_t1_c4096,
-    tmix_kk_a_gate,
-    tmix_kk_a_gate_update_shift,
-    tmix_lnx_rkvres_xg,
-    tmix_vres_gate,
-    cmix_sparse_one,
-    cmix_sparse_rows,
+    act_sigmoid,
+    act_tanh,
+    add_vec,
+    cmix_mix,
+    cmix_mix_cfg,
     cmix_sparse_down_one,
-    cmix_sparse_down_rows,
     cmix_sparse_down_relu_one,
     cmix_sparse_down_relu_rows,
     cmix_sparse_down_relu_rows_t512,
-    cmix_mix,
-    cmix_mix_cfg,
+    cmix_sparse_down_rows,
+    cmix_sparse_one,
+    cmix_sparse_rows,
     relu_square,
-    act_tanh,
-    act_sigmoid,
-    add_vec,
+    tmix_kk_a_gate,
+    tmix_kk_a_gate_update_shift,
+    tmix_lnx_rkvres_xg,
+    tmix_mix6,
+    tmix_mix6_cfg,
+    tmix_mix6_t1_c4096,
+    tmix_vres_gate,
 )
 
 

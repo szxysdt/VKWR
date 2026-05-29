@@ -1,6 +1,7 @@
+from typing import TYPE_CHECKING
+
 import torch
 import torch.nn as nn
-from typing import TYPE_CHECKING, List, Optional
 
 from vkwr._ops.sampling_ops import sample_temperature_topk_topp, setup_rand
 
@@ -12,12 +13,12 @@ class RWKV7Sampler(nn.Module):
     def __init__(self, seed: int = 42):
         super().__init__()
         self.seed = seed
-        self._states: Optional[torch.Tensor] = None
+        self._states: torch.Tensor | None = None
 
     def forward(
         self,
         logits: torch.Tensor,
-        sampling_params_list: List["SamplingParams"],
+        sampling_params_list: list["SamplingParams"],
     ):
         B, _ = logits.shape
         if self._states is None or self._states.shape[0] // 64 != B:

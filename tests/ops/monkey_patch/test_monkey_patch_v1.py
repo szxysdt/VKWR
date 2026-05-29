@@ -1,6 +1,7 @@
+from pathlib import Path
+
 import pytest
 import torch
-from pathlib import Path
 
 # Import V1 ops to register torch.ops
 from vkwr._ops.v1 import import_all_v1_ops
@@ -329,7 +330,9 @@ def _compute_cmix_sparse_down_relu_rows_t512(data):
 # Precision cap: tight (1e-2). Same atomicAdd(__half2) non-determinism as cmix_sparse_down_relu_one.
 @pytest.mark.skipif(not _get_files("cmix_sparse_down_relu_rows_t512"), reason="No cmix_sparse_down_relu_rows_t512 golden data")
 def test_cmix_sparse_down_relu_rows_t512():
-    _test_with_tolerances("cmix_sparse_down_relu_rows_t512", _get_files("cmix_sparse_down_relu_rows_t512"), _compute_cmix_sparse_down_relu_rows_t512, PRECISION_TIERS[:3])
+    _test_with_tolerances(
+        "cmix_sparse_down_relu_rows_t512", _get_files("cmix_sparse_down_relu_rows_t512"), _compute_cmix_sparse_down_relu_rows_t512, PRECISION_TIERS[:3]
+    )
 
 
 # ==================== relu_square ====================

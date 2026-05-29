@@ -1,7 +1,9 @@
+from pathlib import Path
+
 import pytest
 import torch
-from pathlib import Path
-from vkwr._ops.rwkv7_ops import rwkv7_fwd_seq, rwkv7_fwd_one, spmv_forward, HEAD_SIZE
+
+from vkwr._ops.rwkv7_ops import HEAD_SIZE, rwkv7_fwd_one, rwkv7_fwd_seq, spmv_forward
 
 MONKEY_PATCH_DIR = Path(__file__).parent.parent.parent / "third_party" / "ops" / "monkey_patch"
 

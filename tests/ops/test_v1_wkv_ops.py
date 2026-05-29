@@ -11,20 +11,22 @@ inputs (r, w, k, v, neg_kk, kka) and outputs (y, state) at runtime, then compare
 them against the migrated kernel.  See the migration plan for details.
 """
 
+import time
+
 import pytest
 import torch
-import time
+
 from vkwr._ops.v1.v1_wkv_ops import (
-    wkv_seq_fp16,
-    wkv_seq_w0_fp16,
-    wkv_one_fp16,
-    wkv_one_w0_fp16,
+    HEAD_SIZE,
+    advance_i32,
+    wkv_forward_block_fp32,
     wkv_forward_fp32,
     wkv_forward_seq_fp32,
     wkv_forward_small_fp32,
-    wkv_forward_block_fp32,
-    advance_i32,
-    HEAD_SIZE,
+    wkv_one_fp16,
+    wkv_one_w0_fp16,
+    wkv_seq_fp16,
+    wkv_seq_w0_fp16,
 )
 
 

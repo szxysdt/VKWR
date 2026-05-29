@@ -1,6 +1,7 @@
-import torch
 from abc import ABC, abstractmethod
 from typing import Any
+
+import torch
 
 from vkwr.model_executor.model_loader.default_loader import DefaultModelLoader
 

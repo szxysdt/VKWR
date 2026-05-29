@@ -1,5 +1,6 @@
 import torch
 
+from vkwr._ops.rwkv7_ops import rwkv7_fwd_one, rwkv7_fwd_seq
 from vkwr._ops.v1.v1_linear_ops import linear_t_act_f16, linear_t_f16
 from vkwr._ops.v1.v1_mix_ops import (
     add_vec,
@@ -8,7 +9,6 @@ from vkwr._ops.v1.v1_mix_ops import (
     tmix_mix6,
     tmix_vres_gate,
 )
-from vkwr._ops.rwkv7_ops import rwkv7_fwd_one, rwkv7_fwd_seq
 
 
 def _lowrank_linear(x: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor, w1t: torch.Tensor, w2t: torch.Tensor, act=None) -> torch.Tensor:

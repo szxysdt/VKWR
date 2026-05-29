@@ -1,6 +1,7 @@
 import torch
 import torch.library
-from vkwr import _rwkv7_C
+
+from vkwr import _rwkv7_C  # noqa: F401
 
 HEAD_SIZE = 64
 

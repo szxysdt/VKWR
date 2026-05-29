@@ -1,12 +1,12 @@
 import pytest
 import torch
+
 from vkwr._ops.v1.v1_rank_ops import (
     linear_wag_rank_in_f16,
-    linear_wagv_rank_in_f16,
     linear_wag_rank_out_f16,
+    linear_wagv_rank_in_f16,
     linear_wagv_rank_out_f16,
 )
-
 
 # ===== linear_wag_rank_in_f16: return type B(3) — [w1, a1, g1] =====
 

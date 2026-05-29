@@ -1,6 +1,5 @@
 from vkwr._ops.rwkv7_ops import rwkv7_fwd_one, rwkv7_fwd_seq
 
-
 __all__ = ["rwkv7_fwd_seq", "rwkv7_fwd_one"]
 
 

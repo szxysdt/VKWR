@@ -1,5 +1,6 @@
-import torch
 from typing import Any
+
+import torch
 
 
 def load_pytorch_state_dict(model_path: str, device: str = "cpu") -> dict[str, Any]:

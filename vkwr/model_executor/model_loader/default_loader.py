@@ -1,5 +1,6 @@
-import torch
 from typing import Any
+
+import torch
 
 from vkwr.model_executor.model_loader.base_loader import BaseModelLoader
 from vkwr.model_executor.model_loader.weight_utils import load_pytorch_state_dict, maybe_squeeze

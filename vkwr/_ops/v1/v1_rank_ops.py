@@ -1,6 +1,6 @@
-from vkwr import _v1_rank_C
-
 import torch
+
+from vkwr import _v1_rank_C  # noqa: F401
 
 
 @torch.library.register_fake("vkwr_v1_rank::linear_wag_rank_in_f16")
