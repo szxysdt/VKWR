@@ -548,19 +548,17 @@ def test_linear_orig_rows_f16():
 
 
 def _compute_linear_wag_rank_in_f16(data):
-    M = data["M"]
-    K = data["K"]
-    Rw, Ra, Rg = data["Rw"], data["Ra"], data["Rg"]
-    xw = data["xw"].cuda().half().contiguous().view(M, K)
-    xa = data["xa"].cuda().half().contiguous().view(M, K)
-    xg = data["xg"].cuda().half().contiguous().view(M, K)
+    _Rw, _Ra, _Rg = data["Rw"], data["Ra"], data["Rg"]
+    xw = data["xw"].cuda().half().contiguous()
+    xa = data["xa"].cuda().half().contiguous()
+    xg = data["xg"].cuda().half().contiguous()
     w1_t = _fp16(data["w1_t"])
     a1_t = _fp16(data["a1_t"])
     g1_t = _fp16(data["g1_t"])
-    w1_ref = data["w1"].cuda().half().view(M, Rw)
-    a1_ref = data["a1"].cuda().half().view(M, Ra)
-    g1_ref = data["g1"].cuda().half().view(M, Rg)
-    w1_new, a1_new, g1_new = torch.ops.vkwr_v1_rank.linear_wag_rank_in_f16(M, K, Rw, Ra, Rg, xw, xa, xg, w1_t, a1_t, g1_t)
+    w1_ref = data["w1"].cuda().half()
+    a1_ref = data["a1"].cuda().half()
+    g1_ref = data["g1"].cuda().half()
+    w1_new, a1_new, g1_new = torch.ops.vkwr_v1_rank.linear_wag_rank_in_f16(xw, xa, xg, w1_t, a1_t, g1_t)
     return (w1_new, a1_new, g1_new), (w1_ref, a1_ref, g1_ref)
 
 
@@ -573,22 +571,20 @@ def test_linear_wag_rank_in_f16():
 
 
 def _compute_linear_wagv_rank_in_f16(data):
-    M = data["M"]
-    K = data["K"]
-    Rw, Ra, Rg, Rv = data["Rw"], data["Ra"], data["Rg"], data["Rv"]
-    xw = data["xw"].cuda().half().contiguous().view(M, K)
-    xa = data["xa"].cuda().half().contiguous().view(M, K)
-    xg = data["xg"].cuda().half().contiguous().view(M, K)
-    xv = data["xv"].cuda().half().contiguous().view(M, K)
+    _Rw, _Ra, _Rg, _Rv = data["Rw"], data["Ra"], data["Rg"], data["Rv"]
+    xw = data["xw"].cuda().half().contiguous()
+    xa = data["xa"].cuda().half().contiguous()
+    xg = data["xg"].cuda().half().contiguous()
+    xv = data["xv"].cuda().half().contiguous()
     w1_t = _fp16(data["w1_t"])
     a1_t = _fp16(data["a1_t"])
     g1_t = _fp16(data["g1_t"])
     v1_t = _fp16(data["v1_t"])
-    w1_ref = data["w1"].cuda().half().view(M, Rw)
-    a1_ref = data["a1"].cuda().half().view(M, Ra)
-    g1_ref = data["g1"].cuda().half().view(M, Rg)
-    v1_ref = data["v1"].cuda().half().view(M, Rv)
-    w1_new, a1_new, g1_new, v1_new = torch.ops.vkwr_v1_rank.linear_wagv_rank_in_f16(M, K, Rw, Ra, Rg, Rv, xw, xa, xg, xv, w1_t, a1_t, g1_t, v1_t)
+    w1_ref = data["w1"].cuda().half()
+    a1_ref = data["a1"].cuda().half()
+    g1_ref = data["g1"].cuda().half()
+    v1_ref = data["v1"].cuda().half()
+    w1_new, a1_new, g1_new, v1_new = torch.ops.vkwr_v1_rank.linear_wagv_rank_in_f16(xw, xa, xg, xv, w1_t, a1_t, g1_t, v1_t)
     return (w1_new, a1_new, g1_new, v1_new), (w1_ref, a1_ref, g1_ref, v1_ref)
 
 
@@ -601,19 +597,17 @@ def test_linear_wagv_rank_in_f16():
 
 
 def _compute_linear_wag_rank_out_f16(data):
-    M = data["M"]
-    C = data["C"]
-    Kw, Ka, Kg = data["Kw"], data["Ka"], data["Kg"]
-    w1 = data["w1"].cuda().half().contiguous().view(M, Kw)
-    a1 = data["a1"].cuda().half().contiguous().view(M, Ka)
-    g1 = data["g1"].cuda().half().contiguous().view(M, Kg)
+    _C = data["C"]
+    w1 = data["w1"].cuda().half().contiguous()
+    a1 = data["a1"].cuda().half().contiguous()
+    g1 = data["g1"].cuda().half().contiguous()
     w2_t = _fp16(data["w2_t"])
     a2_t = _fp16(data["a2_t"])
     g2_t = _fp16(data["g2_t"])
-    w_ref = data["w"].cuda().half().view(M, C)
-    a_ref = data["a"].cuda().half().view(M, C)
-    g_ref = data["g"].cuda().half().view(M, C)
-    w_new, a_new, g_new = torch.ops.vkwr_v1_rank.linear_wag_rank_out_f16(M, C, Kw, Ka, Kg, w1, a1, g1, w2_t, a2_t, g2_t)
+    w_ref = data["w"].cuda().half()
+    a_ref = data["a"].cuda().half()
+    g_ref = data["g"].cuda().half()
+    w_new, a_new, g_new = torch.ops.vkwr_v1_rank.linear_wag_rank_out_f16(w1, a1, g1, w2_t, a2_t, g2_t)
     return (w_new, a_new, g_new), (w_ref, a_ref, g_ref)
 
 
@@ -626,25 +620,23 @@ def test_linear_wag_rank_out_f16():
 
 
 def _compute_linear_wagv_rank_out_f16(data):
-    M = data["M"]
-    C = data["C"]
-    Kw, Ka, Kg, Kv = data["Kw"], data["Ka"], data["Kg"], data["Kv"]
-    w1 = data["w1"].cuda().half().contiguous().view(M, Kw)
-    a1 = data["a1"].cuda().half().contiguous().view(M, Ka)
-    g1 = data["g1"].cuda().half().contiguous().view(M, Kg)
-    v1 = data["v1"].cuda().half().contiguous().view(M, Kv)
+    _C = data["C"]
+    w1 = data["w1"].cuda().half().contiguous()
+    a1 = data["a1"].cuda().half().contiguous()
+    g1 = data["g1"].cuda().half().contiguous()
+    v1 = data["v1"].cuda().half().contiguous()
     w2_t = _fp16(data["w2_t"])
     a2_t = _fp16(data["a2_t"])
     g2_t = _fp16(data["g2_t"])
     v2_t = _fp16(data["v2_t"])
-    v = data["v"].cuda().half().contiguous().view(M, C)
-    v_first = data["v_first"].cuda().half().contiguous().view(M, C)
+    v = data["v"].cuda().half().contiguous()
+    v_first = data["v_first"].cuda().half().contiguous()
     v0 = _fp16(data["v0"])
-    w_ref = data["w"].cuda().half().view(M, C)
-    a_ref = data["a"].cuda().half().view(M, C)
-    g_ref = data["g"].cuda().half().view(M, C)
-    v_out_ref = data["v_out"].cuda().half().view(M, C)
-    w_new, a_new, g_new, v_new = torch.ops.vkwr_v1_rank.linear_wagv_rank_out_f16(M, C, Kw, Ka, Kg, Kv, w1, a1, g1, v1, w2_t, a2_t, g2_t, v2_t, v, v_first, v0)
+    w_ref = data["w"].cuda().half()
+    a_ref = data["a"].cuda().half()
+    g_ref = data["g"].cuda().half()
+    v_out_ref = data["v_out"].cuda().half()
+    w_new, a_new, g_new, v_new = torch.ops.vkwr_v1_rank.linear_wagv_rank_out_f16(w1, a1, g1, v1, w2_t, a2_t, g2_t, v2_t, v, v_first, v0)
     return (w_new, a_new, g_new, v_new), (w_ref, a_ref, g_ref, v_out_ref)
 
 
