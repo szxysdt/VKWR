@@ -1,7 +1,7 @@
 import torch
 import torch.library
 
-from vkwr import _v1_wkv_C  # noqa: F401
+from vkwr import _v1_wkv_fp16_C, _v1_wkv_fp32_C  # noqa: F401
 
 HEAD_SIZE = 64
 

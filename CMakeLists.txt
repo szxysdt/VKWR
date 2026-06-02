@@ -42,12 +42,20 @@ add_vkwr_extension(
 
 # v1-1: WKV core (fp16 + fp32) + advance_i32
 add_vkwr_extension(
-    _v1_wkv_C
+    _v1_wkv_fp16_C
     SOURCES
-        csrc/v1/wkv/torch_bindings.cpp
-        csrc/v1/wkv/wkv_fp16_v2.cu
-        csrc/v1/wkv/wkv_fp32_v2.cu
-        csrc/v1/wkv/advance_i32_ops.cu
+        csrc/v1/wkv_fp16/torch_bindings.cpp
+        csrc/v1/wkv_fp16/wkv_fp16_v2.cu
+        csrc/v1/wkv_fp16/advance_i32_ops.cu
+    DEFINITIONS _IO_FP16_
+    NO_FAST_MATH
+)
+
+add_vkwr_extension(
+    _v1_wkv_fp32_C
+    SOURCES
+        csrc/v1/wkv_fp32/torch_bindings.cpp
+        csrc/v1/wkv_fp32/wkv_fp32_v2.cu
     DEFINITIONS _IO_FP16_
 )
 

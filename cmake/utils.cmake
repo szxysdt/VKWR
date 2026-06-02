@@ -1,9 +1,10 @@
 function(add_vkwr_extension ext_name)
-    cmake_parse_arguments(ARG "" "" "SOURCES;LINK_LIBRARIES;DEFINITIONS" ${ARGN})
+    cmake_parse_arguments(ARG "NO_FAST_MATH" "" "SOURCES;LINK_LIBRARIES;DEFINITIONS" ${ARGN})
 
     set(SOURCES ${ARG_SOURCES})
     set(DEFINITIONS ${ARG_DEFINITIONS})
     set(LINK_LIBS ${ARG_LINK_LIBRARIES})
+    set(NO_FAST_MATH ${ARG_NO_FAST_MATH})
 
     Python_add_library(${ext_name} MODULE WITH_SOABI ${SOURCES})
 
@@ -22,9 +23,15 @@ function(add_vkwr_extension ext_name)
             CUDA_ARCHITECTURES "${VKWR_CUDA_ARCH}"
             CUDA_SEPARABLE_COMPILATION ON
         )
-        target_compile_options(${ext_name} PRIVATE
-            $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math -O3 --extra-device-vectorization>
-        )
+        if(ARG_NO_FAST_MATH)
+            target_compile_options(${ext_name} PRIVATE
+                $<$<COMPILE_LANGUAGE:CUDA>:-O3 --extra-device-vectorization -Xptxas=-O3>
+            )
+        else()
+            target_compile_options(${ext_name} PRIVATE
+                $<$<COMPILE_LANGUAGE:CUDA>:--use_fast_math -O3 --extra-device-vectorization -Xptxas=-O3>
+            )
+        endif()
     endif()
 
     set_target_properties(${ext_name} PROPERTIES
