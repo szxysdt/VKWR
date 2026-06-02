@@ -157,7 +157,7 @@ def _make_wkv_realistic_one_inputs(B, C):
     return r, w, k_raw.view(B, C).to(dtype), v, a, b
 
 
-# ===== wkv_seq_fp16: return type C(2) — buffer preallocation + (y, elapsed_t) =====
+# ===== wkv_seq_fp16: in-place, writes to y, returns None =====
 
 
 @pytest.mark.parametrize(
@@ -173,7 +173,9 @@ def _make_wkv_realistic_one_inputs(B, C):
 def test_wkv_seq_fp16_basic(B, T, C):
     state, H = _make_fp16_state(B, C)
     r, w, k, v, a, b = _make_fp16_inputs(B, T, C)
-    y, elapsed_t = wkv_seq_fp16(B, T, C, H, state, r, w, k, v, a, b)
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_seq_fp16(B, T, C, H, state, r, w, k, v, a, b, y, elapsed_t)
     assert y.shape == (B, T, C)
     assert y.dtype == torch.float16
     assert y.device.type == "cuda"
@@ -185,7 +187,9 @@ def test_wkv_seq_fp16_not_nan():
     B, T, C = 2, 8, 256
     state, H = _make_fp16_state(B, C)
     r, w, k, v, a, b = _make_wkv_realistic_inputs(B, T, C)
-    y, elapsed_t = wkv_seq_fp16(B, T, C, H, state, r, w, k, v, a, b)
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_seq_fp16(B, T, C, H, state, r, w, k, v, a, b, y, elapsed_t)
     assert not torch.isnan(y).any()
     assert not torch.isinf(y).any()
 
@@ -195,7 +199,9 @@ def test_wkv_seq_fp16_state_mutation():
     state, H = _make_fp16_state(B, C)
     state_before = state.clone()
     r, w, k, v, a, b = _make_fp16_inputs(B, T, C)
-    wkv_seq_fp16(B, T, C, H, state, r, w, k, v, a, b)
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_seq_fp16(B, T, C, H, state, r, w, k, v, a, b, y, elapsed_t)
     assert not torch.equal(state, state_before)
 
 
@@ -203,7 +209,9 @@ def test_wkv_seq_fp16_zero_input():
     B, T, C = 1, 4, 128
     state, H = _make_fp16_state(B, C)
     zero = torch.zeros(B, T, C, dtype=torch.float16, device="cuda")
-    y, _ = wkv_seq_fp16(B, T, C, H, state, zero, zero, zero, zero, zero, zero)
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_seq_fp16(B, T, C, H, state, zero, zero, zero, zero, zero, zero, y, elapsed_t)
     assert not torch.isnan(y).any()
 
 
@@ -211,8 +219,10 @@ def test_wkv_seq_fp16_invalid_head_size():
     B, T, C, H = 1, 4, 100, 2
     state, _ = _make_fp16_state(B, C)
     r, w, k, v, a, b = _make_fp16_inputs(B, T, C)
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
     with pytest.raises(RuntimeError):
-        wkv_seq_fp16(B, T, C, H, state, r, w, k, v, a, b)
+        wkv_seq_fp16(B, T, C, H, state, r, w, k, v, a, b, y, elapsed_t)
 
 
 def test_wkv_seq_fp16_determinism():
@@ -220,12 +230,16 @@ def test_wkv_seq_fp16_determinism():
     r, w, k, v, a, b = _make_wkv_realistic_inputs(B, T, C)
     state1, H1 = _make_fp16_state(B, C)
     state2, H2 = _make_fp16_state(B, C)
-    y1, _ = wkv_seq_fp16(B, T, C, H1, state1, r.clone(), w.clone(), k.clone(), v.clone(), a.clone(), b.clone())
-    y2, _ = wkv_seq_fp16(B, T, C, H2, state2, r.clone(), w.clone(), k.clone(), v.clone(), a.clone(), b.clone())
+    y1 = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    y2 = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    elapsed_t1 = torch.zeros(B, dtype=torch.int32, device="cuda")
+    elapsed_t2 = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_seq_fp16(B, T, C, H1, state1, r.clone(), w.clone(), k.clone(), v.clone(), a.clone(), b.clone(), y1, elapsed_t1)
+    wkv_seq_fp16(B, T, C, H2, state2, r.clone(), w.clone(), k.clone(), v.clone(), a.clone(), b.clone(), y2, elapsed_t2)
     torch.testing.assert_close(y1, y2, atol=0, rtol=0)
 
 
-# ===== wkv_seq_w0_fp16: return type C(2) — extra w0 param =====
+# ===== wkv_seq_w0_fp16: in-place, writes to y, returns None =====
 
 
 @pytest.mark.parametrize(
@@ -235,8 +249,10 @@ def test_wkv_seq_fp16_determinism():
 def test_wkv_seq_w0_fp16_basic(B, T, C):
     state, H = _make_fp16_state(B, C)
     r, w, k, v, a, b = _make_fp16_inputs(B, T, C)
-    w0 = torch.randn(B, T, C, dtype=torch.float16, device="cuda")
-    y, elapsed_t = wkv_seq_w0_fp16(B, T, C, H, state, r, w, w0, k, v, a, b)
+    w0 = torch.randn(C, dtype=torch.float16, device="cuda")
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_seq_w0_fp16(B, T, C, H, state, r, w, w0, k, v, a, b, y, elapsed_t)
     assert y.shape == (B, T, C)
     assert y.dtype == torch.float16
     assert elapsed_t.shape == (B,)
@@ -246,12 +262,14 @@ def test_wkv_seq_w0_fp16_not_nan():
     B, T, C = 2, 4, 256
     state, H = _make_fp16_state(B, C)
     r, w, k, v, a, b = _make_wkv_realistic_inputs(B, T, C)
-    w0 = (torch.randn(B, T, C, dtype=torch.float32, device="cuda") * 0.1).to(torch.float16)
-    y, _ = wkv_seq_w0_fp16(B, T, C, H, state, r, w, w0, k, v, a, b)
+    w0 = (torch.randn(C, dtype=torch.float32, device="cuda") * 0.1).to(torch.float16)
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_seq_w0_fp16(B, T, C, H, state, r, w, w0, k, v, a, b, y, elapsed_t)
     assert not torch.isnan(y).any()
 
 
-# ===== wkv_one_fp16: return type C(2) — single token =====
+# ===== wkv_one_fp16: in-place, writes to y, returns None =====
 
 
 @pytest.mark.parametrize(
@@ -261,7 +279,9 @@ def test_wkv_seq_w0_fp16_not_nan():
 def test_wkv_one_fp16_basic(B, C):
     state, H = _make_fp16_state(B, C)
     r, w, k, v, a, b = _make_fp16_one_inputs(B, C)
-    y, elapsed_t = wkv_one_fp16(B, C, H, state, r, w, k, v, a, b)
+    y = torch.empty(B, C, dtype=torch.float16, device="cuda")
+    elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_one_fp16(B, C, H, state, r, w, k, v, a, b, y, elapsed_t)
     assert y.shape == (B, C)
     assert y.dtype == torch.float16
     assert elapsed_t.shape == (B,)
@@ -272,7 +292,9 @@ def test_wkv_one_fp16_not_nan():
     B, C = 2, 256
     state, H = _make_fp16_state(B, C)
     r, w, k, v, a, b = _make_wkv_realistic_one_inputs(B, C)
-    y, _ = wkv_one_fp16(B, C, H, state, r, w, k, v, a, b)
+    y = torch.empty(B, C, dtype=torch.float16, device="cuda")
+    elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_one_fp16(B, C, H, state, r, w, k, v, a, b, y, elapsed_t)
     assert not torch.isnan(y).any()
 
 
@@ -281,7 +303,9 @@ def test_wkv_one_fp16_state_mutation():
     state, H = _make_fp16_state(B, C)
     state_before = state.clone()
     r, w, k, v, a, b = _make_fp16_one_inputs(B, C)
-    wkv_one_fp16(B, C, H, state, r, w, k, v, a, b)
+    y = torch.empty(B, C, dtype=torch.float16, device="cuda")
+    elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_one_fp16(B, C, H, state, r, w, k, v, a, b, y, elapsed_t)
     assert not torch.equal(state, state_before)
 
 
@@ -289,7 +313,9 @@ def test_wkv_one_fp16_zero_input():
     B, C = 1, 128
     state, H = _make_fp16_state(B, C)
     zero = torch.zeros(B, C, dtype=torch.float16, device="cuda")
-    y, _ = wkv_one_fp16(B, C, H, state, zero, zero, zero, zero, zero, zero)
+    y = torch.empty(B, C, dtype=torch.float16, device="cuda")
+    elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_one_fp16(B, C, H, state, zero, zero, zero, zero, zero, zero, y, elapsed_t)
     assert not torch.isnan(y).any()
 
 
@@ -297,12 +323,16 @@ def test_wkv_one_fp16_determinism():
     B, C = 2, 256
     state, H = _make_fp16_state(B, C)
     r, w, k, v, a, b = _make_wkv_realistic_one_inputs(B, C)
-    y1, _ = wkv_one_fp16(B, C, H, state.clone(), r.clone(), w.clone(), k.clone(), v.clone(), a.clone(), b.clone())
-    y2, _ = wkv_one_fp16(B, C, H, state.clone(), r.clone(), w.clone(), k.clone(), v.clone(), a.clone(), b.clone())
+    y1 = torch.empty(B, C, dtype=torch.float16, device="cuda")
+    y2 = torch.empty(B, C, dtype=torch.float16, device="cuda")
+    elapsed_t1 = torch.zeros(B, dtype=torch.int32, device="cuda")
+    elapsed_t2 = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_one_fp16(B, C, H, state.clone(), r.clone(), w.clone(), k.clone(), v.clone(), a.clone(), b.clone(), y1, elapsed_t1)
+    wkv_one_fp16(B, C, H, state.clone(), r.clone(), w.clone(), k.clone(), v.clone(), a.clone(), b.clone(), y2, elapsed_t2)
     torch.testing.assert_close(y1, y2, atol=0, rtol=0)
 
 
-# ===== wkv_one_w0_fp16: return type C(2) — single token with w0 =====
+# ===== wkv_one_w0_fp16: in-place, writes to y, returns None =====
 
 
 @pytest.mark.parametrize(
@@ -312,13 +342,15 @@ def test_wkv_one_fp16_determinism():
 def test_wkv_one_w0_fp16_basic(B, C):
     state, H = _make_fp16_state(B, C)
     r, w, k, v, a, b = _make_fp16_one_inputs(B, C)
-    w0 = torch.randn(B, C, dtype=torch.float16, device="cuda")
-    y, elapsed_t = wkv_one_w0_fp16(B, C, H, state, r, w, w0, k, v, a, b)
+    w0 = torch.randn(C, dtype=torch.float16, device="cuda")
+    y = torch.empty(B, C, dtype=torch.float16, device="cuda")
+    elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
+    wkv_one_w0_fp16(B, C, H, state, r, w, w0, k, v, a, b, y, elapsed_t)
     assert y.shape == (B, C)
     assert elapsed_t.shape == (B,)
 
 
-# ===== fp32 wrappers: return type C(1) — buffer preallocation, no elapsed_t =====
+# ===== fp32 wrappers: in-place, writes to y, returns None =====
 
 
 @pytest.mark.parametrize(
@@ -333,7 +365,8 @@ def test_wkv_one_w0_fp16_basic(B, C):
 def test_wkv_forward_fp32_basic(B, T, C):
     state, H = _make_fp32_state(B, C)
     r, w, k, v, a, b = _make_wkv_realistic_inputs(B, T, C)
-    y = wkv_forward_fp32(B, T, C, H, state, r, w, k, v, a, b)
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    wkv_forward_fp32(B, T, C, H, state, r, w, k, v, a, b, y)
     assert y.shape == (B, T, C)
     assert y.dtype == torch.float16
     assert not torch.isnan(y).any()
@@ -346,7 +379,8 @@ def test_wkv_forward_fp32_basic(B, T, C):
 def test_wkv_forward_seq_fp32_basic(B, T, C):
     state, H = _make_fp32_state(B, C)
     r, w, k, v, a, b = _make_wkv_realistic_inputs(B, T, C)
-    y = wkv_forward_seq_fp32(B, T, C, H, state, r, w, k, v, a, b)
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    wkv_forward_seq_fp32(B, T, C, H, state, r, w, k, v, a, b, y)
     assert y.shape == (B, T, C)
     assert y.dtype == torch.float16
     assert not torch.isnan(y).any()
@@ -359,7 +393,8 @@ def test_wkv_forward_seq_fp32_basic(B, T, C):
 def test_wkv_forward_small_fp32_basic(B, T, C):
     state, H = _make_fp32_state(B, C)
     r, w, k, v, a, b = _make_wkv_realistic_inputs(B, T, C)
-    y = wkv_forward_small_fp32(B, T, C, H, state, r, w, k, v, a, b)
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    wkv_forward_small_fp32(B, T, C, H, state, r, w, k, v, a, b, y)
     assert y.shape == (B, T, C)
     assert y.dtype == torch.float16
     assert not torch.isnan(y).any()
@@ -372,7 +407,8 @@ def test_wkv_forward_small_fp32_basic(B, T, C):
 def test_wkv_forward_block_fp32_basic(B, T, C):
     state, H = _make_fp32_state(B, C)
     r, w, k, v, a, b = _make_wkv_realistic_inputs(B, T, C)
-    y = wkv_forward_block_fp32(B, T, C, H, state, r, w, k, v, a, b)
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    wkv_forward_block_fp32(B, T, C, H, state, r, w, k, v, a, b, y)
     assert y.shape == (B, T, C)
     assert y.dtype == torch.float16
     assert not torch.isnan(y).any()
@@ -383,7 +419,8 @@ def test_wkv_forward_fp32_state_mutation():
     state, H = _make_fp32_state(B, C)
     state_before = state.clone()
     r, w, k, v, a, b = _make_wkv_realistic_inputs(B, T, C)
-    wkv_forward_fp32(B, T, C, H, state, r, w, k, v, a, b)
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    wkv_forward_fp32(B, T, C, H, state, r, w, k, v, a, b, y)
     assert not torch.equal(state, state_before)
 
 
@@ -391,7 +428,8 @@ def test_wkv_forward_fp32_zero_input():
     B, T, C = 1, 4, 128
     state, H = _make_fp32_state(B, C)
     zero = torch.zeros(B, T, C, dtype=torch.float16, device="cuda")
-    y = wkv_forward_fp32(B, T, C, H, state, zero, zero, zero, zero, zero, zero)
+    y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+    wkv_forward_fp32(B, T, C, H, state, zero, zero, zero, zero, zero, zero, y)
     assert not torch.isnan(y).any()
 
 
@@ -405,7 +443,7 @@ def test_wkv_forward_fp32_invalid_state_dtype():
         torch.ops.vkwr_v1_wkv.wkv_forward_fp32(B, T, C, H, bad_state, r, w, k, v, a, b, y)
 
 
-# ===== advance_i32: return type C(0) — in-place, returns None =====
+# ===== advance_i32: in-place, returns None =====
 
 
 def test_advance_i32_basic():
@@ -460,7 +498,9 @@ def test_wkv_seq_fp16_performance():
     torch.cuda.synchronize()
     start = time.perf_counter()
     for _ in range(30):
-        wkv_seq_fp16(B, T, C, H, state.clone(), r.clone(), w.clone(), k.clone(), v.clone(), a.clone(), b.clone())
+        y = torch.empty(B, T, C, dtype=torch.float16, device="cuda")
+        elapsed_t = torch.zeros(B, dtype=torch.int32, device="cuda")
+        wkv_seq_fp16(B, T, C, H, state.clone(), r.clone(), w.clone(), k.clone(), v.clone(), a.clone(), b.clone(), y, elapsed_t)
     torch.cuda.synchronize()
     elapsed = time.perf_counter() - start
     avg_ms = elapsed / 30 * 1000
