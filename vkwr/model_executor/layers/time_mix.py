@@ -17,45 +17,26 @@ from vkwr._ops.v1.v1_rank_ops import (
     linear_wagv_rank_out_f16,
 )
 from vkwr._ops.v1.v1_wkv_ops import wkv_forward_fp32, wkv_seq_fp16, wkv_seq_w0_fp16
+from vkwr.config.model import RWKV7InferenceConfig
 from vkwr.model_executor.layers.linear import RWKV7LinearDispatcher
-from vkwr.model_executor.layers.path_dispatcher_config import PathConfig
-
-LOWRANK_IN_ROWS_T = 7
-LOWRANK_OUT_ROWS_T = 4
-LOWRANK_FUSED_MIN_C = 1024
-
-
-def _can_use_lowrank_fused(rows: int, C: int) -> bool:
-    return C >= LOWRANK_FUSED_MIN_C and rows <= LOWRANK_IN_ROWS_T
-
-
-def _can_use_lowrank_out_fused(rows: int, C: int) -> bool:
-    return C >= LOWRANK_FUSED_MIN_C and rows <= LOWRANK_OUT_ROWS_T
+from vkwr.model_executor.layers.path_dispatcher_config import PathConfig, lorank_cfg
 
 
 class RWKV7TimeMixDispatcher(nn.Module):
-    """1:1 对齐 Albatross tmix 方法的无状态类。
-
-    权重通过 weights dict 传入，dispatcher 外部注入，
-    所有全局常量（LOWRANK_WEIGHT, WKV_MODE）通过构造参数传入。
-    """
-
     def __init__(
         self,
         C: int,
         H: int,
         linear_dispatcher: RWKV7LinearDispatcher,
-        lowrank_weight: str = "both",
-        wkv_mode: str = "fp16",
         model_dict: dict | None = None,
+        inference_config: RWKV7InferenceConfig | None = None,
     ):
         super().__init__()
         self.C = C
         self.H = H
         self.linear_dispatcher = linear_dispatcher
-        self.lowrank_weight = lowrank_weight
-        self.wkv_mode = wkv_mode
         self.model_dict = model_dict
+        self.inference_config = inference_config if inference_config is not None else RWKV7InferenceConfig()
 
     def forward(
         self,
@@ -103,7 +84,12 @@ class RWKV7TimeMixDispatcher(nn.Module):
             v = self.linear_dispatcher.linear_orig_layout(xv, weights[param_prefix + "value.weight"], path, "att_c2c")
 
         v1 = None
-        if self.lowrank_weight != "orig" and _can_use_lowrank_fused(path.rows, C) and _can_use_lowrank_out_fused(path.rows, C) and layer != 0:
+        if (
+            self.inference_config.lowrank_weight != "orig"
+            and lorank_cfg.can_use_lowrank_fused(path.rows, C)
+            and lorank_cfg.can_use_lowrank_out_fused(path.rows, C)
+            and layer != 0
+        ):
             w1, a1, g1, v1 = linear_wagv_rank_in_f16(
                 xw.contiguous(),
                 xa.contiguous(),
@@ -114,7 +100,7 @@ class RWKV7TimeMixDispatcher(nn.Module):
                 weights[param_prefix + "g1.t"],
                 weights[param_prefix + "v1.t"],
             )
-        elif self.lowrank_weight != "orig" and _can_use_lowrank_fused(path.rows, C):
+        elif self.inference_config.lowrank_weight != "orig" and lorank_cfg.can_use_lowrank_fused(path.rows, C):
             w1, a1, g1 = linear_wag_rank_in_f16(
                 xw.contiguous(),
                 xa.contiguous(),
@@ -129,7 +115,7 @@ class RWKV7TimeMixDispatcher(nn.Module):
             g1 = self.linear_dispatcher.linear_rank_in(xg, weights.get(param_prefix + "g1"), weights.get(param_prefix + "g1.t"), path.rows)
 
         v_done = False
-        if self.lowrank_weight != "orig" and _can_use_lowrank_out_fused(path.rows, C) and layer != 0 and v1 is not None:
+        if self.inference_config.lowrank_weight != "orig" and lorank_cfg.can_use_lowrank_out_fused(path.rows, C) and layer != 0 and v1 is not None:
             w, a, g, v = linear_wagv_rank_out_f16(
                 w1.contiguous(),
                 a1.contiguous(),
@@ -144,7 +130,7 @@ class RWKV7TimeMixDispatcher(nn.Module):
                 weights[param_prefix + "v0"],
             )
             v_done = True
-        elif self.lowrank_weight != "orig" and _can_use_lowrank_out_fused(path.rows, C):
+        elif self.inference_config.lowrank_weight != "orig" and lorank_cfg.can_use_lowrank_out_fused(path.rows, C):
             w, a, g = linear_wag_rank_out_f16(
                 w1.contiguous(),
                 a1.contiguous(),
@@ -164,7 +150,7 @@ class RWKV7TimeMixDispatcher(nn.Module):
         if layer == 0:
             v_first = v
         elif not v_done:
-            if self.lowrank_weight != "orig" and _can_use_lowrank_out_fused(path.rows, C):
+            if self.inference_config.lowrank_weight != "orig" and lorank_cfg.can_use_lowrank_out_fused(path.rows, C):
                 warnings.warn(
                     "This branch was previously dead code introduced by an upstream project and has since been cleaned up",
                     RuntimeWarning,
@@ -182,7 +168,7 @@ class RWKV7TimeMixDispatcher(nn.Module):
                 v = tmix_vres_gate(B, T, C, v.contiguous(), v_first.contiguous(), weights[param_prefix + "v0"], v12.contiguous())
 
         y = torch.empty_like(r)
-        if self.wkv_mode == "fp32io16":
+        if self.inference_config.wkv_mode == "fp32io16":
             w_raw = add_vec(C, w.contiguous(), weights[param_prefix + "w0"])
             wkv_forward_fp32(
                 B, T, C, H, wkv_state, r.contiguous(), w_raw.contiguous(), k.contiguous(), v.contiguous(), neg_kk.contiguous(), kka.contiguous(), y
