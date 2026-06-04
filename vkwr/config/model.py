@@ -2,16 +2,44 @@ from dataclasses import dataclass
 
 import torch
 
+from vkwr.config.utils import config, get_hash_factors, hash_factors
 
-@dataclass(frozen=True)
+
+@config
 class ModelConfig:
-    """Model configuration (L, C, H, N, V), replaces module-level globals."""
+    """vLLM-style model configuration for engine layer.
+
+    Contains model path, tokenizer, dtype, and loading parameters.
+    Used by EngineArgs -> VkwrConfig pipeline.
+    """
+
+    model: str
+    tokenizer: str | None = None
+    tokenizer_mode: str = "rwkv"
+    trust_remote_code: bool = False
+    dtype: str = "float16"
+    load_format: str = "auto"
+    seed: int = 42
+    max_model_len: int | None = None
+
+    def compute_hash(self) -> str:
+        factors = get_hash_factors(self)
+        return hash_factors(factors)
+
+
+@config
+class RWKV7Config:
+    """RWKV7 architecture dimensions (L, C, H, N, V)."""
 
     L: int  # number of layers
     C: int  # hidden dim (= H * N)
     H: int  # number of heads
     N: int  # head size (HEAD_SIZE, fixed 64)
     V: int  # vocab size
+
+    def compute_hash(self) -> str:
+        factors = get_hash_factors(self)
+        return hash_factors(factors)
 
 
 LOWRANK_WEIGHT_SUFFIXES = ("att.w1", "att.w2", "att.a1", "att.a2", "att.g1", "att.g2", "att.v1", "att.v2")

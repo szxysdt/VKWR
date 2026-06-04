@@ -11,7 +11,7 @@ from vkwr._ops.v1.v1_norm_ops import (
     layer_norm_f16,
 )
 from vkwr._ops.v1.v1_wkv_ops import HEAD_SIZE, advance_i32
-from vkwr.config.model import ModelConfig, RWKV7InferenceConfig, WeightConfig
+from vkwr.config.model import RWKV7Config, RWKV7InferenceConfig, WeightConfig
 from vkwr.model_executor.layers.channel_mix import RWKV7ChannelMixDispatcher
 from vkwr.model_executor.layers.linear import RWKV7LinearDispatcher
 from vkwr.model_executor.layers.path_dispatcher_config import CmixConfig, CmixThresholds, PathConfig, PathSelector
@@ -69,7 +69,7 @@ class RWKV7:
         torch.set_float32_matmul_precision("high")
         torch._C._jit_set_autocast_mode(False)
 
-    def _load_and_detect_dims(self) -> tuple[ModelConfig, dict[str, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
+    def _load_and_detect_dims(self) -> tuple[RWKV7Config, dict[str, torch.Tensor], torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor | None]:
 
         log(f"loading weights from {self.model_path}")
         z = torch.load(self.model_path, map_location="cpu", mmap=True)
@@ -80,7 +80,7 @@ class RWKV7:
         assert N == HEAD_SIZE
         max_layer = max(int(k.split(".")[1]) for k in z.keys() if k.startswith("blocks."))
         L = max_layer + 1
-        config = ModelConfig(L=L, C=C, H=H, N=N, V=V)
+        config = RWKV7Config(L=L, C=C, H=H, N=N, V=V)
         log(f"detected model C={C} H={H} N={N} V={V}")
         log(f"cmix no-fc path: rows<={self.cmix_thresholds.nofc_max_rows} row20_t<={self.cmix_thresholds.nofc_row20_max_t}")
 
