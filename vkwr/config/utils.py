@@ -11,7 +11,7 @@ ConfigT = TypeVar("ConfigT")
 
 def config(cls=None, *, config_dict=None, **kwargs):
     """Decorator to create a pydantic dataclass with default config.
-    对齐 vLLM vllm/config/utils.py L52-80。默认禁止额外字段。"""
+    Aligned with vLLM vllm/config/utils.py L52-80. Extra fields are forbidden by default."""
     merged_config = ConfigDict(extra="forbid")
     if config_dict is not None:
         merged_config.update(config_dict)
@@ -26,7 +26,7 @@ def config(cls=None, *, config_dict=None, **kwargs):
 
 def replace(config_obj, /, **kwargs):
     """Like dataclasses.replace, but compatible with Pydantic dataclasses.
-    对齐 vLLM vllm/config/utils.py L119-127。"""
+    Aligned with vLLM vllm/config/utils.py L119-127."""
     cls = type(config_obj)
     result_dict = config_obj.__dict__.copy()
     result_dict.update(kwargs)
@@ -35,7 +35,7 @@ def replace(config_obj, /, **kwargs):
 
 def update_config(config_obj, overrides):
     """Recursively apply overrides to a config dataclass.
-    对齐 vLLM vllm/config/utils.py L210-227。"""
+    Aligned with vLLM vllm/config/utils.py L210-227."""
     processed = {}
     for field_name, value in overrides.items():
         current_value = getattr(config_obj, field_name)
@@ -49,7 +49,7 @@ def update_config(config_obj, overrides):
 
 def normalize_value(x):
     """Return a stable, JSON-serializable canonical form for hashing.
-    参考 vLLM vllm/config/utils.py L230-321，精简为 VKWR 需要的子集。"""
+    Reference: vLLM vllm/config/utils.py L230-321, simplified to VKWR's subset."""
     if x is None or isinstance(x, (bool, int, float, str)):
         return x
     if is_dataclass(x):
@@ -67,7 +67,7 @@ def normalize_value(x):
 
 def get_hash_factors(config_obj, ignored_factors=None):
     """Gets factors used for hashing a config dataclass.
-    对齐 vLLM vllm/config/utils.py L324-342。"""
+    Aligned with vLLM vllm/config/utils.py L324-342."""
     ignored = ignored_factors or set()
     result = {}
     for dc_field in fields(config_obj):
@@ -80,8 +80,8 @@ def get_hash_factors(config_obj, ignored_factors=None):
 
 def get_default_cudagraph_capture_sizes(max_num_seqs: int, max_num_batched_tokens: int) -> list[int]:
     """Generate CUDA Graph capture sizes.
-    参照 vLLM _set_cudagraph_sizes() 策略，根据 max_num_seqs 和
-    max_num_batched_tokens 动态计算合适的 capture size 列表。"""
+    Follows vLLM _set_cudagraph_sizes() strategy to dynamically compute capture sizes
+    based on max_num_seqs and max_num_batched_tokens."""
     max_size = min(max_num_seqs * 2, 512)
     max_size = min(max_size, max_num_batched_tokens)
     if max_size < 1:
@@ -101,5 +101,5 @@ def get_default_cudagraph_capture_sizes(max_num_seqs: int, max_num_batched_token
 
 def hash_factors(items):
     """Return a SHA-256 hex digest of the canonical items structure.
-    对齐 vLLM vllm/config/utils.py L345-347。"""
+    Aligned with vLLM vllm/config/utils.py L345-347."""
     return hashlib.sha256(json.dumps(items, sort_keys=True, default=str).encode()).hexdigest()

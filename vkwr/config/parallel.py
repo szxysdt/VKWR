@@ -10,9 +10,9 @@ class ParallelConfig:
 
     def __post_init__(self):
         if self.tp_size != 1:
-            raise ValueError("V3 暂不支持 TP")
+            raise ValueError("V3 does not support TP yet")
         if self.pp_size != 1:
-            raise ValueError("V3 暂不支持 PP")
+            raise ValueError("V3 does not support PP yet")
 
     def compute_hash(self) -> str:
         factors = get_hash_factors(self)

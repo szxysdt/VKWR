@@ -20,12 +20,12 @@ class VkwrConfig:
 
     def __post_init__(self):
         if self.model_config.dtype != "float16":
-            raise ValueError("RWKV7 仅支持 float16")
+            raise ValueError("RWKV7 only supports float16")
 
         if self.scheduler_config.max_num_batched_tokens < self.scheduler_config.max_num_seqs:
-            raise ValueError("max_num_batched_tokens 必须 >= max_num_seqs")
+            raise ValueError("max_num_batched_tokens must be >= max_num_seqs")
 
-        # 动态计算 CUDA Graph capture sizes（F1 修复）
+        # Dynamically compute CUDA Graph capture sizes (F1 fix)
         if self.compilation_config.cudagraph_capture_size is None and not self.worker_config.enforce_eager and self.compilation_config.cudagraph_mode != "none":
             from vkwr.config.utils import get_default_cudagraph_capture_sizes, replace
 
