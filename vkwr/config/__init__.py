@@ -1,6 +1,6 @@
 from vkwr.config.compilation import CompilationConfig
 from vkwr.config.engine import VkwrConfig
-from vkwr.config.model import ModelConfig, RWKV7Config
+from vkwr.config.model import ModelConfig, RWKV7Config, RWKV7InferenceConfig, WeightConfig
 from vkwr.config.parallel import ParallelConfig
 from vkwr.config.scheduler import SchedulerConfig
 from vkwr.config.utils import (
@@ -22,8 +22,10 @@ __all__ = [
     "ModelConfig",
     "ParallelConfig",
     "RWKV7Config",
+    "RWKV7InferenceConfig",
     "SchedulerConfig",
     "VkwrConfig",
+    "WeightConfig",
     "config",
     "get_default_cudagraph_capture_sizes",
     "get_hash_factors",

@@ -19,6 +19,7 @@ class SchedulerConfig:
     enable_chunked_prefill: bool = True
     eos_token_id: int = 0
     ignore_eos: bool = False
+    default_max_tokens: int | None = None
 
     def __post_init__(self, max_model_len: int | None) -> None:
         if max_model_len and self.max_num_batched_tokens < max_model_len:

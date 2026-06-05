@@ -53,7 +53,6 @@ class CMakeBuild(build_ext):
         torch_dir = Path(torch.utils.cmake_prefix_path)
 
         cmake_args = [
-            str(ROOT_DIR),
             f"-DVKWR_TARGET_DEVICE={device}",
             f"-DVKWR_CUDA_ARCH={cuda_arch}",
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={ROOT_DIR / 'vkwr'}",
@@ -62,7 +61,6 @@ class CMakeBuild(build_ext):
             f"-DCMAKE_PREFIX_PATH={torch_dir}",
         ]
 
-        # setup.py 修改第 71-77 行
         if sys.platform == "win32":
             build_tool = ["-G", "Visual Studio 17 2022", "-A", "x64"]
         elif _is_ninja_available():

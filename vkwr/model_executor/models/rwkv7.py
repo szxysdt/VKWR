@@ -157,6 +157,10 @@ class RWKV7:
             p = f"blocks.{layer}.att."
             z[p + "rkv.weight"] = torch.stack((z[p + "receptance.weight"], z[p + "key.weight"], z[p + "value.weight"])).contiguous()
 
+    @property
+    def device(self) -> torch.device:
+        return self.z["blocks.0.att.r_k"].device
+
     def zero_state(self, B: int) -> list[torch.Tensor]:
         cfg = self.config
         wkv_dtype = torch.float32 if self.inference_config.wkv_mode == "fp32io16" else self.inference_config.dtype

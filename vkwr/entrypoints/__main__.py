@@ -3,9 +3,6 @@
 Usage:
     # Start OpenAI-compatible API server
     vkwr --model /path/to/model.pth
-
-    # CLI generation (direct mode)
-    vkwr --model /path/to/model.pth --generate "Hello, world!"
 """
 
 from __future__ import annotations
@@ -49,12 +46,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--host", default="0.0.0.0", help="API server host")
     parser.add_argument("--port", type=int, default=8000, help="API server port")
 
-    # Direct generation mode
-    parser.add_argument("--generate", type=str, default=None, help="Direct generation mode: pass a prompt and print output")
+    # Generation defaults (applied when API request omits max_tokens)
     parser.add_argument("--max-tokens", type=int, default=None, help="Maximum tokens to generate (global default, used when API request omits it)")
-    parser.add_argument("--temperature", type=float, default=1.0, help="Sampling temperature (--generate mode)")
-    parser.add_argument("--top-p", type=float, default=1.0, help="Nucleus sampling parameter (--generate mode)")
-    parser.add_argument("--top-k", type=int, default=-1, help="Top-k sampling parameter (--generate mode)")
 
     return parser
 
@@ -84,45 +77,7 @@ def main() -> None:
         default_max_tokens=args.max_tokens,
     )
 
-    if args.generate is not None:
-        _run_generate(args, engine_args)
-    else:
-        _run_server(args, engine_args)
-
-
-def _run_generate(args: argparse.Namespace, engine_args: EngineArgs) -> None:
-    """Direct generation mode: load model, run one generation, print results, and exit."""
-    from vkwr.engine.request import SamplingParams
-    from vkwr.entrypoints.llm import LLM
-
-    logger.info("Starting VKWR in generate mode...")
-    logger.info("Model: %s", engine_args.model)
-
-    llm = LLM(**vars(engine_args))
-
-    sampling_params = SamplingParams(
-        temperature=args.temperature,
-        top_p=args.top_p,
-        top_k=args.top_k,
-        max_tokens=args.max_tokens,
-    )
-
-    try:
-        outputs = llm.generate(args.generate, sampling_params)
-    except Exception as e:
-        logger.error("Generation failed: %s", e, exc_info=True)
-        sys.exit(1)
-
-    if not outputs:
-        logger.warning("No output generated")
-        return
-
-    for out in outputs:
-        if out.outputs:
-            print(out.outputs[0].text, end="")
-            print()
-        else:
-            print("(empty output)")
+    _run_server(args, engine_args)
 
 
 def _run_server(args: argparse.Namespace, engine_args: EngineArgs) -> None:

@@ -26,6 +26,7 @@ class EngineArgs:
     distributed_executor_backend: str | None = None
     cudagraph_capture_size: list[int] | None = None
     cudagraph_mode: str = "full"
+    default_max_tokens: int | None = None
 
     def create_engine_config(self) -> VkwrConfig:
         mc_kwargs: dict = {
@@ -46,6 +47,7 @@ class EngineArgs:
             max_model_len=model_config.max_model_len,
             max_num_batched_tokens=self.max_num_batched_tokens or 2048,
             max_num_seqs=self.max_num_seqs,
+            default_max_tokens=self.default_max_tokens,
         )
 
         worker_config = GPUWorkerConfig(
