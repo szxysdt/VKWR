@@ -29,9 +29,8 @@ dependencies = [
 vkwr = "vkwr.entrypoints.__main__:main"
 
 
-[project.optional-dependencies]
-test = ["pytest>=7.0", "pytest-cov", "httpx>=0.27.0"]
-dev = ["ruff>=0.4.0"]
+[dependency-groups]
+dev = ["ruff>=0.4.0", "pytest>=7.0", "pytest-cov", "httpx>=0.27.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
