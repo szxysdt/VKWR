@@ -91,3 +91,39 @@ add_vkwr_extension(
         csrc/v1/rank/torch_bindings.cpp
         csrc/v1/rank/rank_ops.cu
 )
+
+# v1_5: WKV core (fp16) — varlen
+add_vkwr_extension(
+    _v1_5_wkv_fp16_C
+    SOURCES
+        csrc/v1_5/wkv_fp16/torch_bindings.cpp
+        csrc/v1_5/wkv_fp16/wkv_fp16_v2.cu
+        csrc/v1_5/wkv_fp16/advance_i32_ops.cu
+    DEFINITIONS _IO_FP16_
+    NO_FAST_MATH
+)
+
+# v1_5: WKV core fp32 — varlen
+add_vkwr_extension(
+    _v1_5_wkv_fp32_C
+    SOURCES
+        csrc/v1_5/wkv_fp32/torch_bindings.cpp
+        csrc/v1_5/wkv_fp32/wkv_fp32_v2.cu
+    DEFINITIONS _IO_FP16_
+)
+
+# v1_5: Mix ops — varlen
+add_vkwr_extension(
+    _v1_5_mix_C
+    SOURCES
+        csrc/v1_5/mix/torch_bindings.cpp
+        csrc/v1_5/mix/mix_ops.cu
+)
+
+# v1_5: Norm ops — varlen (fused + add_last_ln only)
+add_vkwr_extension(
+    _v1_5_norm_C
+    SOURCES
+        csrc/v1_5/norm/torch_bindings.cpp
+        csrc/v1_5/norm/norm_ops.cu
+)
