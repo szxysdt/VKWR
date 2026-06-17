@@ -248,28 +248,45 @@ class RWKV7TimeMixDispatcher(nn.Module):
 
         y = torch.empty_like(r)
         if max_t == 1:
-            r1 = r.view(B, C) if r.dim() == 3 else r
-            w1 = w.view(B, C) if w.dim() == 3 else w
-            k1 = k.view(B, C) if k.dim() == 3 else k
-            v1 = v.view(B, C) if v.dim() == 3 else v
-            neg_kk1 = neg_kk.view(B, C) if neg_kk.dim() == 3 else neg_kk
-            kka1 = kka.view(B, C) if kka.dim() == 3 else kka
-            y1 = y.view(B, C) if y.dim() == 3 else y
-            wkv_one_w0_fp16(
-                B,
-                C,
-                H,
-                wkv_state,
-                r1.contiguous(),
-                w1.contiguous(),
-                weights[param_prefix + "w0"],
-                k1.contiguous(),
-                v1.contiguous(),
-                neg_kk1.contiguous(),
-                kka1.contiguous(),
-                y1,
-                elapsed_t,
-            )
+            if self.inference_config.wkv_mode == "fp32io16":
+                w_raw = add_vec(C, w.contiguous(), weights[param_prefix + "w0"])
+                wkv_forward_fp32(
+                    B,
+                    1,
+                    C,
+                    H,
+                    wkv_state,
+                    r.view(B, 1, C).contiguous(),
+                    w_raw.view(B, 1, C).contiguous(),
+                    k.view(B, 1, C).contiguous(),
+                    v.view(B, 1, C).contiguous(),
+                    neg_kk.view(B, 1, C).contiguous(),
+                    kka.view(B, 1, C).contiguous(),
+                    y.view(B, 1, C).contiguous(),
+                )
+            else:
+                r1 = r.view(B, C) if r.dim() == 3 else r
+                w1 = w.view(B, C) if w.dim() == 3 else w
+                k1 = k.view(B, C) if k.dim() == 3 else k
+                v1 = v.view(B, C) if v.dim() == 3 else v
+                neg_kk1 = neg_kk.view(B, C) if neg_kk.dim() == 3 else neg_kk
+                kka1 = kka.view(B, C) if kka.dim() == 3 else kka
+                y1 = y.view(B, C) if y.dim() == 3 else y
+                wkv_one_w0_fp16(
+                    B,
+                    C,
+                    H,
+                    wkv_state,
+                    r1.contiguous(),
+                    w1.contiguous(),
+                    weights[param_prefix + "w0"],
+                    k1.contiguous(),
+                    v1.contiguous(),
+                    neg_kk1.contiguous(),
+                    kka1.contiguous(),
+                    y1,
+                    elapsed_t,
+                )
         elif is_uniform:
             r_3d = r.view(B, max_t, C).contiguous()
             k_3d = k.view(B, max_t, C).contiguous()

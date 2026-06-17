@@ -4,6 +4,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from vkwr.engine.request import SamplingParams
+from vkwr.utils import generate_request_id
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -55,7 +56,7 @@ class LLM:
 
         Returns:
             streaming=False: A list of RequestOutput after all requests complete.
-            streaming=True: An iterator yielding completed RequestOutput one by one.
+            streaming=True: An iterator yielding RequestOutput objects per step.
         """
         self._lazy_init()
         engine = self.llm_engine
@@ -70,13 +71,13 @@ class LLM:
 
         # Register all requests
         for i, prompt in enumerate(prompts_list):
-            req_id = f"req-{i}"
+            req_id = generate_request_id(f"req-{i}")
             engine.add_request(req_id, prompt, sampling_params)
 
         if streaming:
             return self._stream_results(engine)
         else:
-            return self._collect_results(engine)
+            return self._collect_results(engine, sampling_params)
 
     def _normalize_prompts(
         self,
@@ -94,19 +95,57 @@ class LLM:
             return [prompts]
         return list(prompts)
 
-    def _collect_results(self, engine: LLMEngine) -> list[RequestOutput]:
-        """Block until all requests finish, then return the full results list."""
+    def _collect_results(self, engine: LLMEngine, sampling_params: SamplingParams) -> list[RequestOutput]:
+        """Block until all requests finish, then return the full results list.
+
+        In DELTA mode, intermediate outputs only contain new tokens. We must
+        aggregate them per request so the final result contains all tokens.
+        In CUMULATIVE mode, each output already contains the full history,
+        so we can simply keep the last one.
+        """
+        from vkwr.engine.request import RequestOutputKind
+
+        accumulate = sampling_params.output_kind == RequestOutputKind.DELTA
         outputs: list[RequestOutput] = []
+        accumulators: dict[str, RequestOutput] = {}
         while engine.has_unfinished_requests():
-            finished = engine.step()
-            outputs.extend(finished)
+            step_outputs = engine.step()
+            for out in step_outputs:
+                if accumulate:
+                    if out.request_id not in accumulators:
+                        accumulators[out.request_id] = out
+                    else:
+                        accumulators[out.request_id].add(out, aggregate=True)
+                else:
+                    accumulators[out.request_id] = out
+                if out.finished:
+                    outputs.append(accumulators.pop(out.request_id))
+                    engine.remove_request(out.request_id)
         return outputs
 
     def _stream_results(self, engine: LLMEngine) -> Iterator[RequestOutput]:
-        """Stream completed request results as they finish."""
-        while engine.has_unfinished_requests():
-            finished = engine.step()
-            yield from finished
+        """Stream RequestOutput objects as they are produced each step.
+
+        Each yielded RequestOutput contains the incremental update for that step.
+        For DELTA mode: only new tokens since the last yield.
+        For CUMULATIVE mode: full text from the start.
+        """
+        try:
+            while engine.has_unfinished_requests():
+                step_outputs = engine.step()
+                for out in step_outputs:
+                    yield out
+                    if out.finished:
+                        engine.remove_request(out.request_id)
+        except GeneratorExit:
+            # Consumer broke out early or generator was garbage collected.
+            # Drain remaining requests to clean up output_processor._requests.
+            while engine.has_unfinished_requests():
+                step_outputs = engine.step()
+                for out in step_outputs:
+                    if out.finished:
+                        engine.remove_request(out.request_id)
+            return
 
     def abort_request(self, request_id: str) -> None:
         """Abort the request with the given ID."""

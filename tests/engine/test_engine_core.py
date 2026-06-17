@@ -42,7 +42,7 @@ def _make_scheduler_output(
             req_id: RequestRunData(
                 request_id=req_id,
                 prompt_token_ids=[1, 2, 3],
-                start_pos=0,
+                num_computed_tokens=0,
                 num_tokens=1,
                 sampling_params=SamplingParams(),
                 input_token_ids=input_token_ids or [1],
@@ -77,7 +77,9 @@ class TestEngineCoreInit:
         core = EngineCore(config)
 
         MockGetClass.assert_called_once_with(config)
-        mock_executor_cls.assert_called_once_with(config)
+        assert mock_executor_cls.call_count == 1
+        call_args = mock_executor_cls.call_args[0]
+        assert call_args[0] is config
         assert not core._initialized
 
     @patch("vkwr.engine.core.ExecutorInterface.get_class")

@@ -5,6 +5,7 @@ import time
 from typing import TYPE_CHECKING
 
 from vkwr.executor.abstract import ExecutorInterface
+from vkwr.state.state_slot_manager import StateSlotManager
 
 if TYPE_CHECKING:
     from vkwr.config.engine import VkwrConfig
@@ -29,7 +30,8 @@ class EngineCore:
 
     def __init__(self, config: VkwrConfig):
         self.config = config
-        self.model_executor: ExecutorInterface = ExecutorInterface.get_class(config)(config)
+        self.slot_manager = StateSlotManager(config.scheduler_config.max_num_seqs)
+        self.model_executor: ExecutorInterface = ExecutorInterface.get_class(config)(config, self.slot_manager)
         self._create_scheduler()
         self._initialized = False
 
@@ -37,7 +39,7 @@ class EngineCore:
         """Create scheduler instance. Phase 1 uses SimpleScheduler, replaceable later."""
         from vkwr.scheduler.scheduler import SimpleScheduler
 
-        self.scheduler: SchedulerInterface = SimpleScheduler(self.config)
+        self.scheduler: SchedulerInterface = SimpleScheduler(self.config, self.slot_manager)
 
     def initialize(self) -> None:
         """Initialize: load model and warmup."""
@@ -95,6 +97,9 @@ class EngineCore:
         # 2. Execute model (including sampling)
         model_output = self.model_executor.execute_model(scheduler_output)
 
+        # 2b. Save state cache for finished requests (before slots are freed)
+        self._save_finished_state(scheduler_output)
+
         # 3. Update scheduler state and generate engine outputs
         engine_outputs = self.scheduler.update_from_output(scheduler_output, model_output)
 
@@ -104,6 +109,25 @@ class EngineCore:
             timestamp=time.time(),
         )
         return all_outputs
+
+    def _save_finished_state(self, scheduler_output) -> None:
+        """Save state cache for finished requests (before slots are freed)."""
+        runner = self.model_executor.worker.model_runner
+        if runner is None or runner.state_cache is None:
+            return
+
+        for req_id in scheduler_output.finished_req_ids:
+            run_data = scheduler_output.request_data.get(req_id)
+            if run_data is None:
+                continue
+            slot = run_data.slot_index
+            token_pos = run_data.num_computed_tokens
+            req = next((r for r in self.scheduler.running if r.request_id == req_id), None)
+            if req is not None:
+                state = runner._slice_state_from_slot(slot)
+                runner.state_cache.save(req_id, state, token_pos)
+            else:
+                runner.state_cache.clear(req_id)
 
     def abort_request(self, request_id: str) -> None:
         """Abort the specified request."""

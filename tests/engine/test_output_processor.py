@@ -46,16 +46,14 @@ class TestAddRequest:
         processor = OutputProcessor(model_config)
         processor.add_request(sample_request)
 
-        req_output = processor._requests["req-1"]
-        assert req_output.request_id == "req-1"
-        assert req_output.prompt == "hello"
-        assert req_output.prompt_token_ids == [1, 2, 3]
-        assert req_output.finished is False
-        assert req_output.finish_reason is None
-        assert len(req_output.outputs) == 1
-        assert req_output.outputs[0].token_ids == []
-        assert req_output.outputs[0].text == ""
-        assert req_output.stats is not None
+        req_state = processor._requests["req-1"]
+        assert req_state.request.request_id == "req-1"
+        assert req_state.request.prompt == "hello"
+        assert req_state.request.prompt_token_ids == [1, 2, 3]
+        assert req_state.finished is False
+        assert req_state.finish_reason is None
+        assert req_state.token_ids == []
+        assert req_state.text == ""
 
 
 class TestProcessOutputsIncremental:
@@ -75,10 +73,11 @@ class TestProcessOutputsIncremental:
                 )
             ]
         )
-        finished = processor.process_outputs(step1)
-        assert len(finished) == 0
-        req_output = processor._requests["req-1"]
-        assert req_output.outputs[0].token_ids == [10, 20]
+        streaming = processor.process_outputs(step1)
+        assert len(streaming) == 1
+        assert streaming[0].finished is False
+        req_state = processor._requests["req-1"]
+        assert req_state.token_ids == [10, 20]
 
         step2 = EngineCoreOutputs(
             outputs=[
@@ -90,9 +89,10 @@ class TestProcessOutputsIncremental:
                 )
             ]
         )
-        finished = processor.process_outputs(step2)
-        assert len(finished) == 0
-        assert req_output.outputs[0].token_ids == [10, 20, 30]
+        streaming = processor.process_outputs(step2)
+        assert len(streaming) == 1
+        assert streaming[0].finished is False
+        assert req_state.token_ids == [10, 20, 30]
 
 
 class TestProcessOutputsFinish:

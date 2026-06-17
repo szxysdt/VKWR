@@ -6,6 +6,7 @@ from vkwr.config.compilation import CompilationConfig
 from vkwr.config.model import ModelConfig
 from vkwr.config.parallel import ParallelConfig
 from vkwr.config.scheduler import SchedulerConfig
+from vkwr.config.state import StateConfig
 from vkwr.config.utils import config
 from vkwr.config.worker import GPUWorkerConfig
 
@@ -17,6 +18,7 @@ class VkwrConfig:
     worker_config: GPUWorkerConfig = Field(default_factory=GPUWorkerConfig)
     parallel_config: ParallelConfig = Field(default_factory=ParallelConfig)
     compilation_config: CompilationConfig = Field(default_factory=CompilationConfig)
+    state_config: StateConfig = Field(default_factory=StateConfig)
 
     def __post_init__(self):
         if self.model_config.dtype != "float16":
@@ -48,4 +50,5 @@ class VkwrConfig:
         factors.append(self.worker_config.compute_hash())
         factors.append(self.parallel_config.compute_hash())
         factors.append(self.compilation_config.compute_hash())
+        factors.append(self.state_config.compute_hash())
         return hashlib.sha256(str(factors).encode()).hexdigest()[:10]

@@ -157,19 +157,23 @@ class TestHashFactors:
 class TestGetDefaultCudagraphCaptureSizes:
     def test_small_max_seqs(self):
         sizes = get_default_cudagraph_capture_sizes(4, 8)
-        assert sizes == [1, 2, 4, 8]
+        # max_size = min(4, 512) = 4, capped by min(4, 8) = 4
+        # sizes: [1,2,4]; 8 not appended since 8 > max_size
+        assert sizes == [1, 2, 4]
 
     def test_medium_max_seqs(self):
         sizes = get_default_cudagraph_capture_sizes(16, 128)
-        # max_size = min(16*2, 512) = 32, capped by min(32, 128) = 32
-        # sizes: [1,2,4] + range(8, 33, 8) = [1,2,4,8,16,24,32]
+        # max_size = min(16, 512) = 16, capped by min(16, 128) = 16
+        # sizes: [1,2,4] + range(8, 17, 8) = [1,2,4,8,16]
         assert 1 in sizes
         assert 16 in sizes
-        assert 32 == max(sizes)
+        assert 16 == max(sizes)
 
     def test_large_max_seqs(self):
         sizes = get_default_cudagraph_capture_sizes(128, 2048)
-        assert 256 in sizes
+        # max_size = min(128, 512) = 128, capped by min(128, 2048) = 128
+        # sizes: [1,2,4] + range(8, 129, 8) = [1,2,4,8,...,120,128]
+        assert 128 in sizes
         assert len(sizes) > 10
 
     def test_zero_returns_empty(self):

@@ -48,7 +48,7 @@ class TestProcessInputText:
         sampling_params = SamplingParams()
         req = processor.process_input("req-1", "hello", sampling_params)
 
-        assert req.request_id == "req-1"
+        assert req.request_id.startswith("req-1-")
         assert req.prompt == "hello"
         assert req.prompt_token_ids == [1, 2, 3, 4, 5]
         assert req.sampling_params is sampling_params

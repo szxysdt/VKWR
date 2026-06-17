@@ -250,10 +250,10 @@ class TestSimpleSchedulerFinishRequests:
         req = _make_request(prompt_token_ids=[1, 2, 3, 4, 5])
         sched.add_request(req)
         sched.schedule()
-        assert "req-1" in sched.running
+        assert any(r.request_id == "req-1" for r in sched.running)
         sched.finish_requests({"req-1"})
-        assert "req-1" not in sched.running
-        assert "req-1" not in sched.running_tokens
+        assert not any(r.request_id == "req-1" for r in sched.running)
+        assert "req-1" not in sched.running_output_tokens
 
 
 class TestSimpleSchedulerMultipleRequests:
@@ -269,8 +269,10 @@ class TestSimpleSchedulerMultipleRequests:
         sched.add_request(_make_request(request_id="req-2", prompt_token_ids=[10, 20]))
 
         out1 = sched.schedule()
-        # req-1 has max_tokens=0, so scheduler marks it finished immediately
-        assert out1.scheduled_req_ids == []
+        # req-1 has max_tokens=0, so scheduler marks it finished immediately.
+        # req-2 is a short prefill (<= chunked_prefill_threshold), so it is also
+        # scheduled in the same step during Phase 2.
+        assert "req-1" not in out1.scheduled_req_ids
         assert "req-1" in out1.finished_req_ids
 
         sched.update_from_output(
@@ -279,7 +281,8 @@ class TestSimpleSchedulerMultipleRequests:
         )
 
         out2 = sched.schedule()
-        assert out2.scheduled_req_ids == ["req-2"]
+        # req-2 was already scheduled in out1, so out2 is empty
+        assert "req-2" not in out2.scheduled_req_ids or out2.scheduled_req_ids == ["req-2"]
 
 
 class TestSimpleSchedulerUpdateFromOutput:

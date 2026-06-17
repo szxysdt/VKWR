@@ -11,8 +11,9 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from vkwr.engine.prompts import apply_chat_template, get_default_stop_tokens
-from vkwr.engine.request import SamplingParams
+from vkwr.engine.request import RequestOutputKind, SamplingParams
 from vkwr.entrypoints.llm import LLM
+from vkwr.utils import generate_request_id
 
 if TYPE_CHECKING:
     from vkwr.config.vkwr import EngineArgs
@@ -165,6 +166,7 @@ def _make_chat_completion_chunk(
     finish_reason: str | None,
     model: str,
     created: int | None = None,
+    is_first: bool = False,
 ) -> str:
     """Build an SSE streaming delta chunk (chat.completion)."""
     if created is None:
@@ -178,7 +180,7 @@ def _make_chat_completion_chunk(
             {
                 "index": 0,
                 "delta": {
-                    "role": "assistant" if text else None,
+                    "role": "assistant" if is_first else None,
                     "content": text,
                 },
                 "finish_reason": finish_reason,
@@ -200,6 +202,7 @@ def _make_sampling_params(
     stop: list[str] | None = None,
     stop_token_ids: list[int] | None = None,
     seed: int | None = None,
+    stream: bool = False,
 ) -> SamplingParams:
     return SamplingParams(
         temperature=temperature,
@@ -210,6 +213,7 @@ def _make_sampling_params(
         stop=stop,
         stop_token_ids=stop_token_ids,
         seed=seed,
+        output_kind=RequestOutputKind.DELTA if stream else RequestOutputKind.FINAL_ONLY,
     )
 
 
@@ -228,25 +232,30 @@ async def _stream_completion(
 
     async def event_generator():
         nonlocal req_id
-        # Add request on the main thread (avoid manipulating the engine from an async thread)
         llm._lazy_init()
+        engine = llm.llm_engine
         loop = asyncio.get_event_loop()
+        req_id = generate_request_id("stream")
         await loop.run_in_executor(
             None,
-            llm.llm_engine.add_request,
-            f"stream-{created}",
+            engine.add_request,
+            req_id,
             prompt,
             sampling_params,
         )
-        req_id = f"stream-{created}"
 
-        # Stream results
-        for out in llm._stream_results(llm.llm_engine):
-            text = out.outputs[0].text if out.outputs else ""
-            delta = _make_completion_chunk(req_id or "", text, out.finish_reason, model, created)
-            yield delta
+        # Run engine.step() in executor to avoid blocking the event loop.
+        # Each step triggers a CUDA forward pass that must not run on the
+        # asyncio event loop thread.
+        while engine.has_unfinished_requests():
+            step_outputs = await loop.run_in_executor(None, engine.step)
+            for out in step_outputs:
+                text = out.outputs[0].text if out.outputs else ""
+                delta = _make_completion_chunk(req_id or "", text, out.finish_reason, model, created)
+                yield delta
+                if out.finished:
+                    engine.remove_request(out.request_id)
 
-        # Send done marker
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
@@ -265,20 +274,28 @@ async def _stream_chat_completion(
     async def event_generator():
         nonlocal req_id
         llm._lazy_init()
+        engine = llm.llm_engine
         loop = asyncio.get_event_loop()
+        req_id = generate_request_id("stream-chat")
         await loop.run_in_executor(
             None,
-            llm.llm_engine.add_request,
-            f"stream-chat-{created}",
+            engine.add_request,
+            req_id,
             prompt,
             sampling_params,
         )
-        req_id = f"stream-chat-{created}"
 
-        for out in llm._stream_results(llm.llm_engine):
-            text = out.outputs[0].text if out.outputs else ""
-            delta = _make_chat_completion_chunk(req_id or "", text, out.finish_reason, model, created)
-            yield delta
+        # Send initial chunk with role
+        yield _make_chat_completion_chunk(req_id or "", "", None, model, created, is_first=True)
+
+        while engine.has_unfinished_requests():
+            step_outputs = await loop.run_in_executor(None, engine.step)
+            for out in step_outputs:
+                text = out.outputs[0].text if out.outputs else ""
+                delta = _make_chat_completion_chunk(req_id or "", text, out.finish_reason, model, created)
+                yield delta
+                if out.finished:
+                    engine.remove_request(out.request_id)
 
         yield "data: [DONE]\n\n"
 
@@ -322,6 +339,7 @@ def create_app(engine_args: EngineArgs) -> FastAPI:
             stop=req.stop,
             stop_token_ids=req.stop_token_ids,
             seed=req.seed,
+            stream=req.stream,
         )
 
         if req.stream:
@@ -362,7 +380,7 @@ def create_app(engine_args: EngineArgs) -> FastAPI:
             [{"role": m.role, "content": m.content} for m in req.messages],
             add_generation_prompt=True,
         )
-        stop = req.stop if req.stop else get_default_stop_tokens()
+        stop = req.stop if req.stop is not None else get_default_stop_tokens()
         sampling_params = _make_sampling_params(
             temperature=req.temperature,
             top_p=req.top_p,
@@ -372,6 +390,7 @@ def create_app(engine_args: EngineArgs) -> FastAPI:
             stop=stop,
             stop_token_ids=req.stop_token_ids,
             seed=req.seed,
+            stream=req.stream,
         )
 
         if req.stream:

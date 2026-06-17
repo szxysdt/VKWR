@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import numpy as np
+
 if TYPE_CHECKING:
     from vkwr.engine.request import SamplingParams
 
@@ -11,13 +13,14 @@ if TYPE_CHECKING:
 class RequestRunData:
     request_id: str
     prompt_token_ids: list[int]
-    start_pos: int
+    num_computed_tokens: int
     num_tokens: int
     sampling_params: SamplingParams
     input_token_ids: list[int]
     state: list | None = None
     is_decode: bool = False
     is_last_prefill: bool = False
+    slot_index: int = 0
 
 
 @dataclass
@@ -27,3 +30,5 @@ class SchedulerOutput:
     total_num_scheduled_tokens: int
     finished_req_ids: set[str]
     request_data: dict[str, RequestRunData]
+    sorted_indices: np.ndarray | None = None
+    slot_indices: list[int] | None = None

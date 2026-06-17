@@ -82,7 +82,7 @@ def get_default_cudagraph_capture_sizes(max_num_seqs: int, max_num_batched_token
     """Generate CUDA Graph capture sizes.
     Follows vLLM _set_cudagraph_sizes() strategy to dynamically compute capture sizes
     based on max_num_seqs and max_num_batched_tokens."""
-    max_size = min(max_num_seqs * 2, 512)
+    max_size = min(max_num_seqs, 512)
     max_size = min(max_size, max_num_batched_tokens)
     if max_size < 1:
         return []

@@ -18,13 +18,13 @@ logger = logging.getLogger(__name__)
 class UniprocExecutor(ExecutorInterface):
     """Single-process executor — directly calls GPUWorker"""
 
-    def __init__(self, config: VkwrConfig):
-        super().__init__(config)
+    def __init__(self, config: VkwrConfig, slot_manager=None):
+        super().__init__(config, slot_manager)
         self.worker: GPUWorker | None = None
 
     def initialize(self) -> None:
         self.worker = GPUWorker(self.config)
-        self.worker.init_device()
+        self.worker.init_device(self.slot_manager)
 
     def load_model(self) -> None:
         if self.worker is None:

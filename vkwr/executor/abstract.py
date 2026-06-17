@@ -30,8 +30,9 @@ class ExecutorInterface(ABC):
 
             return UniprocExecutor
 
-    def __init__(self, config: VkwrConfig):
+    def __init__(self, config: VkwrConfig, slot_manager=None):
         self.config = config
+        self.slot_manager = slot_manager
 
     @abstractmethod
     def initialize(self) -> None:

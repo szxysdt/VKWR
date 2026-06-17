@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ast
+import functools
 import logging
 from pathlib import Path
 
@@ -73,7 +75,7 @@ class RWKVTokenizer:
                     continue
                 idx = int(line[: line.index(" ")])
                 token_str_literal = line[line.index(" ") : line.rindex(" ")]
-                x: str | bytes = eval(token_str_literal)  # noqa: S307
+                x: str | bytes = ast.literal_eval(token_str_literal)
                 token_bytes = x.encode("utf-8") if isinstance(x, str) else x
                 assert isinstance(token_bytes, bytes)
                 idx2token[idx] = token_bytes
@@ -133,6 +135,7 @@ class RWKVTokenizer:
         return b"".join(raw).decode("utf-8", errors="replace")
 
 
+@functools.cache
 def get_tokenizer(vocab_path: str | None = None) -> RWKVTokenizer | None:
     """Try to create a tokenizer; return None if vocab file unavailable."""
     try:

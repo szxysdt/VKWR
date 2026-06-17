@@ -41,7 +41,7 @@ def _make_scheduler_output(
             req_id: RequestRunData(
                 request_id=req_id,
                 prompt_token_ids=[1, 2, 3],
-                start_pos=0,
+                num_computed_tokens=0,
                 num_tokens=1,
                 sampling_params=SamplingParams(),
                 input_token_ids=input_token_ids or [1],
@@ -107,7 +107,7 @@ class TestUniprocExecutor:
 
         executor.initialize()
         MockGPUWorker.assert_called_once_with(config)
-        MockGPUWorker.return_value.init_device.assert_called_once()
+        MockGPUWorker.return_value.init_device.assert_called_once_with(None)
 
     @patch("vkwr.executor.uniproc_executor.GPUWorker")
     def test_load_model_before_init_raises(self, MockGPUWorker):

@@ -35,7 +35,7 @@ class TestGPUModelRunner:
         run_data = RequestRunData(
             request_id="req-1",
             prompt_token_ids=[1, 2, 3, 4, 5],
-            start_pos=0,
+            num_computed_tokens=0,
             num_tokens=5,
             sampling_params=sp,
             input_token_ids=[1, 2, 3, 4, 5],
@@ -55,9 +55,14 @@ class TestGPUModelRunner:
         from vkwr.worker.gpu_model_runner import GPUModelRunner
 
         runner = GPUModelRunner(runner_config, torch.device("cpu"))
-        input_ids = runner._prepare_input_ids(scheduler_output)
-        assert input_ids.shape == (1, 5)
-        assert input_ids[0].tolist() == [1, 2, 3, 4, 5]
+        runner._input_ids = torch.empty((runner_config.scheduler_config.max_num_batched_tokens,), dtype=torch.long, device=torch.device("cpu"))
+        runner._query_start_loc = torch.empty((runner_config.scheduler_config.max_num_seqs + 1,), dtype=torch.int32, device=torch.device("cpu"))
+        runner._input_ids_host = torch.empty((runner_config.scheduler_config.max_num_batched_tokens,), dtype=torch.long)
+        runner._query_start_loc_host = torch.empty((runner_config.scheduler_config.max_num_seqs + 1,), dtype=torch.int32)
+        result = runner._prepare_input_ids(scheduler_output)
+        input_ids = result[0]
+        assert input_ids.shape == (5,)
+        assert input_ids.tolist() == [1, 2, 3, 4, 5]
 
     def test_prepare_input_ids_multiple_same_length(self, runner_config):
         from vkwr.worker.gpu_model_runner import GPUModelRunner
@@ -68,7 +73,7 @@ class TestGPUModelRunner:
         run_data1 = RequestRunData(
             request_id="req-1",
             prompt_token_ids=[1, 2, 3],
-            start_pos=0,
+            num_computed_tokens=0,
             num_tokens=3,
             sampling_params=sp,
             input_token_ids=[1, 2, 3],
@@ -78,7 +83,7 @@ class TestGPUModelRunner:
         run_data2 = RequestRunData(
             request_id="req-2",
             prompt_token_ids=[4, 5, 6],
-            start_pos=0,
+            num_computed_tokens=0,
             num_tokens=3,
             sampling_params=sp,
             input_token_ids=[4, 5, 6],
@@ -95,8 +100,13 @@ class TestGPUModelRunner:
         )
 
         runner = GPUModelRunner(runner_config, torch.device("cpu"))
-        input_ids = runner._prepare_input_ids(scheduler_output)
-        assert input_ids.shape == (2, 3)
+        runner._input_ids = torch.empty((runner_config.scheduler_config.max_num_batched_tokens,), dtype=torch.long, device=torch.device("cpu"))
+        runner._query_start_loc = torch.empty((runner_config.scheduler_config.max_num_seqs + 1,), dtype=torch.int32, device=torch.device("cpu"))
+        runner._input_ids_host = torch.empty((runner_config.scheduler_config.max_num_batched_tokens,), dtype=torch.long)
+        runner._query_start_loc_host = torch.empty((runner_config.scheduler_config.max_num_seqs + 1,), dtype=torch.int32)
+        result = runner._prepare_input_ids(scheduler_output)
+        input_ids = result[0]
+        assert input_ids.shape == (6,)
 
     def test_prepare_input_ids_ragged_raises(self, runner_config):
         from vkwr.worker.gpu_model_runner import GPUModelRunner
@@ -107,7 +117,7 @@ class TestGPUModelRunner:
         run_data1 = RequestRunData(
             request_id="req-1",
             prompt_token_ids=[1, 2, 3],
-            start_pos=0,
+            num_computed_tokens=0,
             num_tokens=3,
             sampling_params=sp,
             input_token_ids=[1, 2, 3],
@@ -117,7 +127,7 @@ class TestGPUModelRunner:
         run_data2 = RequestRunData(
             request_id="req-2",
             prompt_token_ids=[4, 5],
-            start_pos=0,
+            num_computed_tokens=0,
             num_tokens=2,
             sampling_params=sp,
             input_token_ids=[4, 5],
@@ -134,8 +144,11 @@ class TestGPUModelRunner:
         )
 
         runner = GPUModelRunner(runner_config, torch.device("cpu"))
-        with pytest.raises(ValueError, match="seq_len"):
-            runner._prepare_input_ids(scheduler_output)
+        runner._input_ids = torch.empty((runner_config.scheduler_config.max_num_batched_tokens,), dtype=torch.long, device=torch.device("cpu"))
+        runner._query_start_loc = torch.empty((runner_config.scheduler_config.max_num_seqs + 1,), dtype=torch.int32, device=torch.device("cpu"))
+        runner._input_ids_host = torch.empty((runner_config.scheduler_config.max_num_batched_tokens,), dtype=torch.long)
+        runner._query_start_loc_host = torch.empty((runner_config.scheduler_config.max_num_seqs + 1,), dtype=torch.int32)
+        runner._prepare_input_ids(scheduler_output)
 
     def test_prepare_state_raises_before_load(self, runner_config, scheduler_output):
         from vkwr.worker.gpu_model_runner import GPUModelRunner

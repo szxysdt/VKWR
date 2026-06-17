@@ -68,15 +68,20 @@ class LLMEngine:
         return request_id
 
     def step(self) -> list[RequestOutput]:
-        """Execute one inference step, returning completed request outputs."""
+        """Execute one inference step, returning streaming request outputs.
+
+        Returns RequestOutput for each request that produced new tokens this step.
+        In sync mode (no queue), these are collected and returned directly.
+        In async mode (with queue), they are pushed to per-request collectors.
+
+        Callers should check output.finished to know if a request has completed.
+        """
         engine_outputs = self.engine_core.step()
-        finished = self.output_processor.process_outputs(engine_outputs)
+        return self.output_processor.process_outputs(engine_outputs)
 
-        # Clean up finished request records
-        for req_output in finished:
-            self.output_processor.remove_request(req_output.request_id)
-
-        return finished
+    def get_and_clear_finished_ids(self) -> list[str]:
+        """Return and clear the list of request IDs that finished in the last step()."""
+        return self.output_processor.get_and_clear_finished_ids()
 
     def abort_request(self, request_id: str) -> None:
         """Abort the specified request."""
@@ -86,3 +91,7 @@ class LLMEngine:
     def has_unfinished_requests(self) -> bool:
         """Check if there are unfinished requests."""
         return self.engine_core.has_unfinished_requests()
+
+    def remove_request(self, request_id: str) -> None:
+        """Remove finished request record from output processor."""
+        self.output_processor.remove_request(request_id)

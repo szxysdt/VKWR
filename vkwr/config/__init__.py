@@ -3,6 +3,7 @@ from vkwr.config.engine import VkwrConfig
 from vkwr.config.model import ModelConfig, RWKV7Config, RWKV7InferenceConfig, WeightConfig
 from vkwr.config.parallel import ParallelConfig
 from vkwr.config.scheduler import SchedulerConfig
+from vkwr.config.state import StateConfig
 from vkwr.config.utils import (
     config,
     get_default_cudagraph_capture_sizes,
@@ -24,6 +25,7 @@ __all__ = [
     "RWKV7Config",
     "RWKV7InferenceConfig",
     "SchedulerConfig",
+    "StateConfig",
     "VkwrConfig",
     "WeightConfig",
     "config",

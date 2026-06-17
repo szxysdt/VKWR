@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from vkwr.config.model import ModelConfig
 from vkwr.config.scheduler import SchedulerConfig
 from vkwr.engine.request import SamplingParams, VkwrRequest
+from vkwr.utils import generate_request_id
 
 if TYPE_CHECKING:
     from vkwr.engine.tokenizer import RWKVTokenizer
@@ -70,6 +71,9 @@ class InputProcessor:
         """
         if not request_id:
             raise ValueError("request_id cannot be empty")
+
+        # Append random suffix to prevent collisions (aligned with vLLM input_processor).
+        request_id = generate_request_id(request_id)
 
         prompt_token_ids: list[int]
 

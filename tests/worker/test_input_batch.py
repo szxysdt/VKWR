@@ -17,7 +17,7 @@ class TestInputBatch:
         run_data = RequestRunData(
             request_id="req-1",
             prompt_token_ids=[1, 2, 3, 4, 5],
-            start_pos=0,
+            num_computed_tokens=0,
             num_tokens=5,
             sampling_params=sp,
             input_token_ids=[1, 2, 3, 4, 5],
@@ -78,7 +78,7 @@ class TestInputBatch:
         run_data = RequestRunData(
             request_id="req-1",
             prompt_token_ids=[1, 2, 3],
-            start_pos=3,
+            num_computed_tokens=3,
             num_tokens=1,
             sampling_params=sp,
             input_token_ids=[42],
@@ -116,7 +116,7 @@ class TestInputBatch:
         run_data1 = RequestRunData(
             request_id="req-1",
             prompt_token_ids=[1, 2, 3],
-            start_pos=0,
+            num_computed_tokens=0,
             num_tokens=3,
             sampling_params=sp,
             input_token_ids=[1, 2, 3],
@@ -126,7 +126,7 @@ class TestInputBatch:
         run_data2 = RequestRunData(
             request_id="req-2",
             prompt_token_ids=[4, 5],
-            start_pos=0,
+            num_computed_tokens=0,
             num_tokens=2,
             sampling_params=sp,
             input_token_ids=[4, 5],

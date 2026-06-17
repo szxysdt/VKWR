@@ -4,6 +4,9 @@ from vkwr.executor.abstract import ExecutorInterface
 class MultiprocExecutor(ExecutorInterface):
     """Multi-process executor (placeholder — Phase 4 implementation)"""
 
+    def __init__(self, config, slot_manager=None):
+        super().__init__(config, slot_manager)
+
     def initialize(self) -> None:
         raise NotImplementedError("MultiprocExecutor is not yet implemented")
 

@@ -25,10 +25,10 @@ class GPUWorker(WorkerBase):
         self.device = torch.device(config.worker_config.device)
         self.model_runner: GPUModelRunner | None = None
 
-    def init_device(self) -> None:
+    def init_device(self, slot_manager=None) -> None:
         """Initialize GPU device and create ModelRunner"""
         torch.cuda.set_device(self.local_rank)
-        self.model_runner = GPUModelRunner(self.config, self.device)
+        self.model_runner = GPUModelRunner(self.config, self.device, slot_manager)
         logger.info("GPU device initialized: %s (rank %d)", self.device, self.local_rank)
 
     def load_model(self) -> None:
@@ -53,7 +53,12 @@ class GPUWorker(WorkerBase):
         return available_mem
 
     def compile_or_warm_up_model(self) -> None:
-        """Phase 1: only perform basic warmup"""
+        """Warmup + CUDA Graph capture (Phase 3)."""
         if self.model_runner is None:
             raise RuntimeError("ModelRunner not initialized. Call init_device() first.")
+
         self.model_runner.warmup()
+
+        if self.model_runner._cudagraph_enabled and self.model_runner.cudagraph_manager:
+            for shape in self.model_runner.cudagraph_manager.capture_shapes:
+                self.model_runner._capture_for_shape(shape)
