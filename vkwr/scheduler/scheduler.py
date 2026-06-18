@@ -351,7 +351,7 @@ class SimpleScheduler(SchedulerInterface):
                         stop_reason=stop_reason,
                     )
                 ],
-                timestamp=time.time(),
+                timestamp=time.monotonic(),
             )
 
         for req_id in scheduler_output.scheduled_req_ids:
@@ -368,7 +368,7 @@ class SimpleScheduler(SchedulerInterface):
                             finish_reason=None,
                         )
                     ],
-                    timestamp=time.time(),
+                    timestamp=time.monotonic(),
                 )
 
         return engine_outputs

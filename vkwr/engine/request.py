@@ -87,7 +87,7 @@ class VkwrRequest:
 
     def __post_init__(self):
         if self.arrival_time == 0.0:
-            self.arrival_time = time.time()
+            self.arrival_time = time.monotonic()
 
     def __hash__(self) -> int:
         return hash(self.request_id)

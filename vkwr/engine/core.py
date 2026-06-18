@@ -90,7 +90,7 @@ class EngineCore:
                 engine_outputs = self.scheduler.update_from_output(scheduler_output, fake_model_output)
                 return EngineCoreOutputs(
                     outputs=[eo for eo_list in engine_outputs.values() for eo in eo_list.outputs],
-                    timestamp=time.time(),
+                    timestamp=time.monotonic(),
                 )
             return EngineCoreOutputs()
 
@@ -106,7 +106,7 @@ class EngineCore:
         # 4. Merge all request outputs
         all_outputs = EngineCoreOutputs(
             outputs=[eo for eo_list in engine_outputs.values() for eo in eo_list.outputs],
-            timestamp=time.time(),
+            timestamp=time.monotonic(),
         )
         return all_outputs
 

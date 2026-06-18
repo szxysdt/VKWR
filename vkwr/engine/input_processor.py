@@ -105,7 +105,7 @@ class InputProcessor:
             prompt=prompt,
             prompt_token_ids=prompt_token_ids,
             sampling_params=sampling_params,
-            arrival_time=time.time(),
+            arrival_time=time.monotonic(),
         )
 
     def _get_max_prompt_len(self) -> int | None:
