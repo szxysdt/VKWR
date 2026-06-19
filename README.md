@@ -6,6 +6,8 @@ Work in progress. A high-performance inference engine for the RWKV linear langua
 
 This project is in early development. Nothing here is stable yet.
 
+> **Work in progress:** The inference engine is being developed on the [`feature/v3-engine`](https://github.com/szxysdt/VKWR/tree/feature/v3-engine) branch.
+
 ## Acknowledgments
 
 VKWR draws inspiration from and builds upon the following outstanding open-source projects:
