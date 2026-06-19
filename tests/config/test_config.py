@@ -158,23 +158,20 @@ class TestGetDefaultCudagraphCaptureSizes:
     def test_small_max_seqs(self):
         sizes = get_default_cudagraph_capture_sizes(4, 8)
         # max_size = min(4, 512) = 4, capped by min(4, 8) = 4
-        # sizes: [1,2,4]; 8 not appended since 8 > max_size
-        assert sizes == [1, 2, 4]
+        # consecutive list: [1, 2, 3, 4]
+        assert sizes == [1, 2, 3, 4]
 
     def test_medium_max_seqs(self):
         sizes = get_default_cudagraph_capture_sizes(16, 128)
         # max_size = min(16, 512) = 16, capped by min(16, 128) = 16
-        # sizes: [1,2,4] + range(8, 17, 8) = [1,2,4,8,16]
-        assert 1 in sizes
-        assert 16 in sizes
-        assert 16 == max(sizes)
+        # consecutive list: [1, 2, ..., 16]
+        assert sizes == list(range(1, 17))
 
     def test_large_max_seqs(self):
         sizes = get_default_cudagraph_capture_sizes(128, 2048)
         # max_size = min(128, 512) = 128, capped by min(128, 2048) = 128
-        # sizes: [1,2,4] + range(8, 129, 8) = [1,2,4,8,...,120,128]
-        assert 128 in sizes
-        assert len(sizes) > 10
+        # consecutive list: [1, 2, ..., 128]
+        assert sizes == list(range(1, 129))
 
     def test_zero_returns_empty(self):
         sizes = get_default_cudagraph_capture_sizes(0, 0)
@@ -222,7 +219,7 @@ class TestSchedulerConfig:
     def test_defaults(self):
         c = SchedulerConfig()
         assert c.max_num_batched_tokens == 2048
-        assert c.max_num_seqs == 128
+        assert c.max_num_seqs == 64
         assert c.chunked_prefill_threshold == 512
         assert c.enable_chunked_prefill is True
         assert c.eos_token_id == 0
@@ -368,7 +365,7 @@ class TestEngineArgs:
         ea = EngineArgs(model="m")
         assert ea.tokenizer is None
         assert ea.dtype == "float16"
-        assert ea.max_num_seqs == 128
+        assert ea.max_num_seqs == 64
         assert ea.gpu_memory_utilization == 0.92
 
     def test_create_engine_config(self):

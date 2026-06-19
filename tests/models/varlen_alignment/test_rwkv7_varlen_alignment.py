@@ -63,13 +63,15 @@ def _load_baseline_model(model_path: str):
 
 @pytest.fixture(scope="module")
 def models():
-    """Load both models once per module."""
+    """Load both models once per module, clean up on teardown."""
     model_path = _get_model_path()
     if model_path is None or not os.path.isfile(model_path):
         pytest.skip(f"Model not found: {model_path}")
     varlen = _load_varlen_model(model_path)
     baseline = _load_baseline_model(model_path)
-    return varlen, baseline
+    yield varlen, baseline
+    del varlen, baseline
+    torch.cuda.empty_cache()
 
 
 def _make_tokens(offset: int, length: int, vocab: int) -> torch.Tensor:

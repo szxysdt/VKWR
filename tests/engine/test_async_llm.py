@@ -117,6 +117,7 @@ class TestAbort:
     @patch("vkwr.engine.llm_engine.LLMEngine")
     def test_abort_single_string(self, MockLLMEngine):
         mock_engine = MagicMock()
+        mock_engine.output_processor.external_req_ids = {}
         MockLLMEngine.return_value = mock_engine
 
         engine = AsyncLLMEngine(_make_config())
@@ -131,6 +132,7 @@ class TestAbort:
     @patch("vkwr.engine.llm_engine.LLMEngine")
     def test_abort_batch(self, MockLLMEngine):
         mock_engine = MagicMock()
+        mock_engine.output_processor.external_req_ids = {}
         MockLLMEngine.return_value = mock_engine
 
         engine = AsyncLLMEngine(_make_config())
@@ -166,6 +168,8 @@ class TestAddRequest:
     @patch("vkwr.engine.llm_engine.LLMEngine")
     def test_add_request_returns_collector(self, MockLLMEngine):
         mock_engine = MagicMock()
+        mock_req = MagicMock(request_id="req-1")
+        mock_engine.input_processor.process_input.return_value = mock_req
         MockLLMEngine.return_value = mock_engine
 
         engine = AsyncLLMEngine(_make_config())
