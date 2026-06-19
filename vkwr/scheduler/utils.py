@@ -11,11 +11,14 @@ def _get_input_tokens(
     num_new: int,
     is_decode: bool,
     output_tokens: list[int],
-) -> list[int]:
-    """Build input_token_ids for a scheduled request."""
+) -> list[int] | None:
+    """Build input_token_ids for a scheduled request.
+
+    Returns None for decode — model runner reads from GPU cache.
+    """
     if not is_decode:
         return req.prompt_token_ids[req.num_computed_tokens : req.num_computed_tokens + num_new]
-    return output_tokens[-1:] if output_tokens else req.prompt_token_ids[-1:]
+    return None
 
 
 def _should_finish(req: VkwrRequest, is_decode: bool, output_tokens: list[int]) -> bool:

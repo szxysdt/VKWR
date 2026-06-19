@@ -33,7 +33,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Scheduler arguments
     parser.add_argument("--max-num-batched-tokens", type=int, default=None, help="Max global tokens per step")
-    parser.add_argument("--max-num-seqs", type=int, default=128, help="Maximum concurrent requests")
+    parser.add_argument("--max-num-seqs", type=int, default=64, help="Maximum concurrent requests")
 
     # Worker arguments
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.92, help="GPU memory utilization cap")

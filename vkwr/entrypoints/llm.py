@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class LLM:
-    """Programmatic API, modeled after vLLM LLM (vllm/entrypoints/llm.py:100+).
+    """Programmatic API, inspired by vLLM LLM (vllm/entrypoints/llm.py).
 
     Wraps LLMEngine and provides a simple generate() method with support for:
     - Text or token IDs as prompts

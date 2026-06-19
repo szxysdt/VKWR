@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import time
@@ -10,9 +9,11 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from vkwr.engine import AsyncLLMEngine
+from vkwr.engine.exceptions import EngineDeadError, EngineGenerateError
+from vkwr.engine.outputs import RequestOutput
 from vkwr.engine.prompts import apply_chat_template, get_default_stop_tokens
 from vkwr.engine.request import RequestOutputKind, SamplingParams
-from vkwr.entrypoints.llm import LLM
 from vkwr.utils import generate_request_id
 
 if TYPE_CHECKING:
@@ -221,40 +222,27 @@ def _make_sampling_params(
 
 
 async def _stream_completion(
-    llm: LLM,
+    async_engine: AsyncLLMEngine,
     prompt: str | list[int],
     sampling_params: SamplingParams,
     model: str,
 ) -> StreamingResponse:
     """Stream a completion generation (text_completion)."""
     created = int(time.time())
-    req_id: str | None = None
+    req_id = generate_request_id("stream")
 
     async def event_generator():
-        nonlocal req_id
-        llm._lazy_init()
-        engine = llm.llm_engine
-        loop = asyncio.get_event_loop()
-        req_id = generate_request_id("stream")
-        await loop.run_in_executor(
-            None,
-            engine.add_request,
-            req_id,
-            prompt,
-            sampling_params,
-        )
-
-        # Run engine.step() in executor to avoid blocking the event loop.
-        # Each step triggers a CUDA forward pass that must not run on the
-        # asyncio event loop thread.
-        while engine.has_unfinished_requests():
-            step_outputs = await loop.run_in_executor(None, engine.step)
-            for out in step_outputs:
+        try:
+            async for out in async_engine.generate(prompt, sampling_params, req_id):
                 text = out.outputs[0].text if out.outputs else ""
-                delta = _make_completion_chunk(req_id or "", text, out.finish_reason, model, created)
+                delta = _make_completion_chunk(req_id, text, out.finish_reason, model, created)
                 yield delta
-                if out.finished:
-                    engine.remove_request(out.request_id)
+        except EngineDeadError:
+            yield _make_completion_chunk(req_id, "", "error", model, created)
+            return
+        except EngineGenerateError:
+            yield _make_completion_chunk(req_id, "", "error", model, created)
+            return
 
         yield "data: [DONE]\n\n"
 
@@ -262,44 +250,50 @@ async def _stream_completion(
 
 
 async def _stream_chat_completion(
-    llm: LLM,
+    async_engine: AsyncLLMEngine,
     prompt: str,
     sampling_params: SamplingParams,
     model: str,
 ) -> StreamingResponse:
     """Stream a chat completion generation (chat.completion)."""
     created = int(time.time())
-    req_id: str | None = None
+    req_id = generate_request_id("stream-chat")
 
     async def event_generator():
-        nonlocal req_id
-        llm._lazy_init()
-        engine = llm.llm_engine
-        loop = asyncio.get_event_loop()
-        req_id = generate_request_id("stream-chat")
-        await loop.run_in_executor(
-            None,
-            engine.add_request,
-            req_id,
-            prompt,
-            sampling_params,
-        )
-
-        # Send initial chunk with role
-        yield _make_chat_completion_chunk(req_id or "", "", None, model, created, is_first=True)
-
-        while engine.has_unfinished_requests():
-            step_outputs = await loop.run_in_executor(None, engine.step)
-            for out in step_outputs:
+        yield _make_chat_completion_chunk(req_id, "", None, model, created, is_first=True)
+        try:
+            async for out in async_engine.generate(prompt, sampling_params, req_id):
                 text = out.outputs[0].text if out.outputs else ""
-                delta = _make_chat_completion_chunk(req_id or "", text, out.finish_reason, model, created)
+                delta = _make_chat_completion_chunk(req_id, text, out.finish_reason, model, created)
                 yield delta
-                if out.finished:
-                    engine.remove_request(out.request_id)
+        except EngineDeadError:
+            yield _make_chat_completion_chunk(req_id, "", "error", model, created)
+            return
+        except EngineGenerateError:
+            yield _make_chat_completion_chunk(req_id, "", "error", model, created)
+            return
 
         yield "data: [DONE]\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+
+async def _collect_completion(
+    async_engine: AsyncLLMEngine,
+    prompt: str | list[int],
+    sampling_params: SamplingParams,
+) -> RequestOutput | None:
+    """Run a non-streaming generation, collecting FINAL_ONLY output."""
+    req_id = generate_request_id("req")
+    out = None
+    try:
+        async for o in async_engine.generate(prompt, sampling_params, req_id):
+            out = o
+    except EngineDeadError:
+        raise
+    except EngineGenerateError:
+        raise
+    return out
 
 
 # ─── App factory ───────────────────────────────────────────────────
@@ -316,8 +310,12 @@ def create_app(engine_args: EngineArgs) -> FastAPI:
     """
     app = FastAPI(title="VKWR API", version="0.1.0")
 
-    # LLM instance is shared at module level (lazy-initialized)
-    llm = LLM(**vars(engine_args))
+    async_engine = AsyncLLMEngine.from_engine_args(engine_args)
+    async_engine._ensure_engine()
+
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        await async_engine.shutdown()
 
     @app.get("/v1/models")
     async def models():
@@ -343,18 +341,18 @@ def create_app(engine_args: EngineArgs) -> FastAPI:
         )
 
         if req.stream:
-            return await _stream_completion(llm, req.prompt, sampling_params, req.model)
+            return await _stream_completion(async_engine, req.prompt, sampling_params, req.model)
 
         try:
-            outputs = llm.generate(req.prompt, sampling_params)
-        except Exception as e:
-            logger.error("Completion failed: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e))
+            out = await _collect_completion(async_engine, req.prompt, sampling_params)
+        except EngineDeadError as e:
+            raise HTTPException(status_code=503, detail="Engine is down") from e
+        except EngineGenerateError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
-        if not outputs:
+        if out is None:
             raise HTTPException(status_code=500, detail="No output generated")
 
-        out = outputs[0]
         text = out.outputs[0].text if out.outputs else ""
         prompt_len = len(out.prompt_token_ids)
         completion_len = len(out.outputs[0].token_ids) if out.outputs else 0
@@ -394,18 +392,18 @@ def create_app(engine_args: EngineArgs) -> FastAPI:
         )
 
         if req.stream:
-            return await _stream_chat_completion(llm, prompt, sampling_params, req.model)
+            return await _stream_chat_completion(async_engine, prompt, sampling_params, req.model)
 
         try:
-            outputs = llm.generate(prompt, sampling_params)
-        except Exception as e:
-            logger.error("Chat completion failed: %s", e, exc_info=True)
-            raise HTTPException(status_code=500, detail=str(e))
+            out = await _collect_completion(async_engine, prompt, sampling_params)
+        except EngineDeadError as e:
+            raise HTTPException(status_code=503, detail="Engine is down") from e
+        except EngineGenerateError as e:
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
-        if not outputs:
+        if out is None:
             raise HTTPException(status_code=500, detail="No output generated")
 
-        out = outputs[0]
         text = out.outputs[0].text if out.outputs else ""
         prompt_len = len(out.prompt_token_ids)
         completion_len = len(out.outputs[0].token_ids) if out.outputs else 0

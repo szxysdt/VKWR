@@ -155,7 +155,7 @@ class TestSimpleSchedulerDecode:
         out2 = sched.schedule()
         rd2 = out2.request_data["req-1"]
         assert rd2.is_decode is True
-        assert rd2.input_token_ids == [100]
+        assert rd2.input_token_ids is None
 
     def test_decode_finishes_at_max_tokens(self):
         sched = SimpleScheduler(_make_config(chunked_prefill_threshold=512))

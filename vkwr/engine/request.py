@@ -71,7 +71,12 @@ class SamplingParams:
 
 @dataclass
 class VkwrRequest:
-    """Internal request object for the engine."""
+    """Internal request object for the engine.
+
+    Inspired by vLLM's EngineCoreRequest:
+    - request_id: internal ID (may have random suffix appended)
+    - external_req_id: user-provided ID, preserved as-is for output
+    """
 
     request_id: str
     prompt: str | list[int]
@@ -81,6 +86,9 @@ class VkwrRequest:
     status: RequestStatus = RequestStatus.WAITING
     priority: int = 0
     lora_request: None = None
+    # The user-provided request ID. Set by InputProcessor.assign_request_id().
+    # Used in final RequestOutput and to support abort by external ID.
+    external_req_id: str | None = None
     # Phase 2: tracking fields for continuous batching
     num_computed_tokens: int = 0
     num_output_tokens: int = 0

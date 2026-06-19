@@ -166,8 +166,7 @@ class TestEngineCoreNotInitialized:
         config = _make_config()
         core = EngineCore(config)
 
-        with pytest.raises(RuntimeError, match="not initialized"):
-            core.abort_request("req-1")
+        core.abort_request("req-1")
 
 
 class TestEngineCoreStep:
@@ -184,9 +183,9 @@ class TestEngineCoreStep:
         core.scheduler.has_requests = MagicMock(return_value=False)
         core._initialized = True
 
-        result = core.step()
-        assert isinstance(result, EngineCoreOutputs)
-        assert result.outputs == []
+        outputs_dict, model_executed = core.step()
+        assert outputs_dict == {}
+        assert model_executed is False
 
     @patch("vkwr.engine.core.ExecutorInterface.get_class")
     def test_step_empty_schedule_returns_empty(self, MockGetClass):
@@ -210,9 +209,9 @@ class TestEngineCoreStep:
         )
         core._initialized = True
 
-        result = core.step()
-        assert isinstance(result, EngineCoreOutputs)
-        assert result.outputs == []
+        outputs_dict, model_executed = core.step()
+        assert outputs_dict == {}
+        assert model_executed is False
 
     @patch("vkwr.engine.core.ExecutorInterface.get_class")
     def test_step_full_flow(self, MockGetClass):
@@ -227,10 +226,12 @@ class TestEngineCoreStep:
 
         scheduler_output = _make_scheduler_output()
         model_output = _make_model_output()
+        from vkwr.engine.outputs import EngineCoreOutput
+
         engine_outputs = {
             "req-1": EngineCoreOutputs(
                 outputs=[
-                    __import__("vkwr.engine.outputs", fromlist=["EngineCoreOutput"]).EngineCoreOutput(
+                    EngineCoreOutput(
                         request_id="req-1",
                         new_token_ids=[42],
                         new_logprobs=None,
@@ -246,8 +247,10 @@ class TestEngineCoreStep:
         core.scheduler.update_from_output = MagicMock(return_value=engine_outputs)
         core._initialized = True
 
-        result = core.step()
-        assert isinstance(result, EngineCoreOutputs)
+        outputs_dict, model_executed = core.step()
+        assert model_executed is True
+        assert 0 in outputs_dict
+        result = outputs_dict[0]
         assert len(result.outputs) == 1
         assert result.outputs[0].new_token_ids == [42]
 
@@ -273,7 +276,7 @@ class TestEngineCoreAddAndAbort:
         assert "req-1" in core.scheduler.running or len(core.scheduler.waiting) > 0
 
     @patch("vkwr.engine.core.ExecutorInterface.get_class")
-    def test_abort_request_calls_finish(self, MockGetClass):
+    def test_abort_request_uses_queue(self, MockGetClass):
         from vkwr.engine.core import EngineCore
 
         mock_executor_cls = MagicMock()
@@ -281,11 +284,11 @@ class TestEngineCoreAddAndAbort:
 
         config = _make_config()
         core = EngineCore(config)
-        core._initialized = True
 
-        core.scheduler.finish_requests = MagicMock()
         core.abort_request("req-1")
-        core.scheduler.finish_requests.assert_called_once_with({"req-1"})
+        val = core.aborts_queue.get_nowait()
+        assert val == ["req-1"]
+        assert core.aborts_queue.empty()
 
     @patch("vkwr.engine.core.ExecutorInterface.get_class")
     def test_has_unfinished_requests(self, MockGetClass):

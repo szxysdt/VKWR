@@ -13,8 +13,12 @@ from __future__ import annotations
 
 import time
 from collections import OrderedDict
+from typing import TYPE_CHECKING
 
 import torch
+
+if TYPE_CHECKING:
+    from vkwr.state.state_disk_store import StateDiskStore
 
 
 class StateCacheEntry:
@@ -36,10 +40,12 @@ class StateCacheManager:
         max_cpu_entries: int = 64,
         max_checkpoints_per_req: int = 8,
         device: str = "cuda",
+        disk_store: StateDiskStore | None = None,
     ):
         self.device = device
         self.max_cpu_entries = max_cpu_entries
         self.max_checkpoints = max_checkpoints_per_req
+        self._disk_store = disk_store
 
         self._cpu_cache: OrderedDict[str, StateCacheEntry] = OrderedDict()
         self._checkpoints: dict[str, list[tuple[int, list[torch.Tensor | int]]]] = {}
@@ -93,7 +99,14 @@ class StateCacheManager:
         """Evict oldest N L2 entries. Returns evicted req_id list."""
         evicted = []
         for _ in range(min(n, len(self._cpu_cache))):
-            req_id, _ = self._cpu_cache.popitem(last=False)
+            req_id, entry = self._cpu_cache.popitem(last=False)
             self._checkpoints.pop(req_id, None)
+            if self._disk_store:
+                self._disk_store.save(req_id, entry.state, entry.token_pos)
             evicted.append(req_id)
         return evicted
+
+    def close(self) -> None:
+        """Close the disk store if present."""
+        if self._disk_store:
+            self._disk_store.close()

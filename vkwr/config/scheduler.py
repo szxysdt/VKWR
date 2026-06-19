@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 @config
 class SchedulerConfig:
     max_num_batched_tokens: int = 2048
-    max_num_seqs: int = 128
+    max_num_seqs: int = 64
     max_model_len: InitVar[int | None] = None
     chunked_prefill_threshold: int = 512
     max_num_partial_prefills: int = 2
@@ -20,6 +20,8 @@ class SchedulerConfig:
     eos_token_id: int = 0
     ignore_eos: bool = False
     default_max_tokens: int | None = None
+    enable_async_scheduling: bool = True
+    batch_queue_size: int = 2
 
     def __post_init__(self, max_model_len: int | None) -> None:
         if max_model_len and self.max_num_batched_tokens < max_model_len:

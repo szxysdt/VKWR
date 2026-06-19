@@ -74,6 +74,9 @@ class GPUModelRunner:
         # State cache manager (Task 6)
         self.state_cache: any | None = None
 
+        # Last sampled token per slot (GPU cache for decode input)
+        self._last_sampled_token: torch.Tensor | None = None
+
     def load_model(self) -> None:
         """Load model weights, initialize RWKV7Model + allocate state buffers"""
         from vkwr.config.model import WeightConfig
@@ -103,6 +106,12 @@ class GPUModelRunner:
         self._state_elapsed = torch.zeros(
             (max_bsz,),
             dtype=torch.int32,
+            device=self.device,
+        )
+        self._last_sampled_token = torch.full(
+            (max_bsz,),
+            fill_value=-1,
+            dtype=torch.long,
             device=self.device,
         )
 
@@ -279,11 +288,14 @@ class GPUModelRunner:
             self._decode_state_wkv[:, i].copy_(self._state_wkv[:, slot])
             self._decode_state_elapsed[i].copy_(self._state_elapsed[slot])
 
-        # 2. Get input tokens (1 per request)
+        # 2. Get input tokens from GPU cache (1 per slot)
         decode_tokens = []
-        for req_id in scheduler_output.scheduled_req_ids:
-            run_data = scheduler_output.request_data[req_id]
-            decode_tokens.append(run_data.input_token_ids[0])
+        for i in range(B):
+            slot = slot_indices[i]
+            token = int(self._last_sampled_token[slot])
+            if token < 0:
+                raise RuntimeError(f"slot {slot} has no sampled token. This should not happen if is_last_prefill sampling is correct.")
+            decode_tokens.append(token)
 
         # 3. Forward: CUDA Graph replay OR eager fallback
         seq_lens = tuple([1] * B)
@@ -383,6 +395,14 @@ class GPUModelRunner:
             if run_data and (run_data.is_decode or run_data.is_last_prefill):
                 sampled_token_ids[req_id] = [sampled[i].item()]
 
+        # Write last sampled token to per-slot cache.
+        # slot_index here is post-reorder. Since _last_sampled_token
+        # is swapped alongside state in _swap_state_slots(), the mapping is consistent.
+        for req_id, tokens in sampled_token_ids.items():
+            if tokens:
+                slot = scheduler_output.request_data[req_id].slot_index
+                self._last_sampled_token[slot] = tokens[0]
+
         from vkwr.engine.outputs import ModelRunnerOutput
 
         return ModelRunnerOutput(
@@ -396,7 +416,11 @@ class GPUModelRunner:
         all_tokens = []
         for req_id in scheduler_output.scheduled_req_ids:
             run_data = scheduler_output.request_data[req_id]
-            all_tokens.extend(run_data.input_token_ids)
+            if run_data.input_token_ids is not None:
+                all_tokens.extend(run_data.input_token_ids)
+            else:
+                slot = run_data.slot_index
+                all_tokens.append(int(self._last_sampled_token[slot]))
 
         total_tokens = len(all_tokens)
 
@@ -476,6 +500,7 @@ class GPUModelRunner:
         self._state_shift[:, :, [i, j]] = self._state_shift[:, :, [j, i]]
         self._state_wkv[:, [i, j]] = self._state_wkv[:, [j, i]]
         self._state_elapsed[[i, j]] = self._state_elapsed[[j, i]]
+        self._last_sampled_token[[i, j]] = self._last_sampled_token[[j, i]]
 
     def _apply_batch_reorder(
         self,

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import TYPE_CHECKING
+
+import torch
 
 from vkwr.executor.abstract import ExecutorInterface
 from vkwr.worker.gpu_worker import GPUWorker
@@ -21,6 +23,8 @@ class UniprocExecutor(ExecutorInterface):
     def __init__(self, config: VkwrConfig, slot_manager=None):
         super().__init__(config, slot_manager)
         self.worker: GPUWorker | None = None
+        self._compute_stream = torch.cuda.Stream()
+        self._executor = ThreadPoolExecutor(max_workers=1)
 
     def initialize(self) -> None:
         self.worker = GPUWorker(self.config)
@@ -34,12 +38,16 @@ class UniprocExecutor(ExecutorInterface):
     def execute_model(self, scheduler_output: SchedulerOutput, non_block: bool = False) -> ModelRunnerOutput | Future[ModelRunnerOutput]:
         if self.worker is None:
             raise RuntimeError("Executor not initialized. Call initialize() first.")
-        output = self.worker.execute_model(scheduler_output)
         if non_block:
-            future: Future[ModelRunnerOutput] = Future()
-            future.set_result(output)
+            future: Future[ModelRunnerOutput] = self._executor.submit(self._run_forward, scheduler_output)
             return future
-        return output
+        return self._run_forward(scheduler_output)
+
+    def _run_forward(self, scheduler_output: SchedulerOutput) -> ModelRunnerOutput:
+        with torch.cuda.stream(self._compute_stream):
+            result = self.worker.execute_model(scheduler_output)
+            self._compute_stream.synchronize()
+            return result
 
     def sample_tokens(
         self,

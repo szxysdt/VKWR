@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from vkwr.config.model import ModelConfig
 from vkwr.engine.outputs import (
     CompletionOutput,
-    EngineCoreOutputs,
+    EngineCoreOutput,
     RequestOutput,
     RequestStats,
 )
@@ -21,10 +21,17 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class OutputProcessorOutput:
+    request_outputs: list[RequestOutput]
+    reqs_to_abort: list[str] = field(default_factory=list)
+
+
+@dataclass
 class _RequestState:
     """Internal per-request tracking state."""
 
     request: VkwrRequest
+    external_req_id: str
     token_ids: list[int]
     text: str
     logprobs: list[dict[int, float]] | None
@@ -35,9 +42,11 @@ class _RequestState:
     queue: RequestOutputCollector | None
     output_kind: RequestOutputKind
     sent_tokens_offset: int
+    is_prefilling: bool
 
     def __init__(self, request: VkwrRequest, queue: RequestOutputCollector | None = None):
         self.request = request
+        self.external_req_id = request.external_req_id or request.request_id
         self.token_ids: list[int] = []
         self.text = ""
         self.logprobs: list[dict[int, float]] | None = None
@@ -48,6 +57,7 @@ class _RequestState:
         self.queue = queue
         self.output_kind = request.sampling_params.output_kind
         self.sent_tokens_offset = 0
+        self.is_prefilling = True
 
     def make_request_output(self, prev_text: str = "") -> RequestOutput:
         """Build a RequestOutput snapshot.
@@ -68,7 +78,7 @@ class _RequestState:
             delta_logprobs = list(self.logprobs) if self.logprobs else None
 
         return RequestOutput(
-            request_id=self.request.request_id,
+            request_id=self.external_req_id,
             prompt=self.request.prompt if isinstance(self.request.prompt, str) else "",
             prompt_token_ids=self.request.prompt_token_ids,
             outputs=[
@@ -128,23 +138,31 @@ class RequestOutputCollector:
             raise output
         return output
 
+    def close(self):
+        """Close the collector, cleaning up resources."""
+        pass
+
 
 class OutputProcessor:
     """Convert engine core output to user-visible request output.
 
     Responsibilities:
-    1. Maintain per-request state (_RequestState)
+    1. Maintain per-request state (_RequestState) keyed by internal request_id
     2. Append EngineCoreOutput tokens to the corresponding request
-    3. Build streaming RequestOutput snapshots each step
+    3. Build streaming RequestOutput snapshots each step (with external_req_id)
     4. Support DELTA and CUMULATIVE output modes
     5. Push to RequestOutputCollector queues for async mode
 
-    Aligned with vLLM architecture: OutputProcessor is held only in LLMEngine, not in EngineCore.
+    Inspired by vLLM's architecture:
+    - _requests dict keyed by internal request_id
+    - external_req_ids maps external -> [internal] for abort support
+    - Final RequestOutput.request_id is the external (user-provided) ID
     """
 
     def __init__(self, model_config: ModelConfig):
         self.model_config = model_config
         self._requests: dict[str, _RequestState] = {}
+        self.external_req_ids: dict[str, list[str]] = {}
         self._tokenizer: RWKVTokenizer | None = None
         self._finished_ids: list[str] = []
 
@@ -160,31 +178,30 @@ class OutputProcessor:
         request: VkwrRequest,
         queue: RequestOutputCollector | None = None,
     ) -> None:
-        """Register a new request with optional async collector queue."""
-        self._requests[request.request_id] = _RequestState(request, queue)
+        """Register a new request with optional async collector queue.
+
+        Uses internal request_id as key. Tracks external -> [internal] mapping
+        for abort support.
+        """
+        request_id = request.request_id
+        external_req_id = request.external_req_id or request_id
+        self._requests[request_id] = _RequestState(request, queue)
+        self.external_req_ids.setdefault(external_req_id, []).append(request_id)
 
     def process_outputs(
         self,
-        engine_outputs: EngineCoreOutputs,
-    ) -> list[RequestOutput]:
+        engine_core_outputs: list[EngineCoreOutput],
+        engine_core_timestamp: float | None = None,
+    ) -> OutputProcessorOutput:
         """Process engine core output, return streaming request outputs.
 
-        For each EngineCoreOutput:
-        1. Append new_token_ids to the request's accumulated state
-        2. Update text via detokenization
-        3. Build a RequestOutput snapshot (DELTA or CUMULATIVE)
-        4. If async queue exists, push to queue; otherwise collect for sync return
-        5. On finish, mark request and track finished ID
-
-        Returns:
-            List of RequestOutput objects for sync consumers. In DELTA mode these
-            contain only new tokens; in CUMULATIVE mode they contain full history.
-            FINAL_ONLY mode only emits on completion.
+        EngineCoreOutput.request_id is the internal ID. Lookup is by internal ID.
+        The resulting RequestOutput.request_id is the external (user-provided) ID.
         """
         self._finished_ids.clear()
         streaming_outputs: list[RequestOutput] = []
 
-        for core_output in engine_outputs.outputs:
+        for core_output in engine_core_outputs:
             req_state = self._requests.get(core_output.request_id)
             if req_state is None:
                 logger.warning(
@@ -210,7 +227,7 @@ class OutputProcessor:
             prev_text = req_state.text
             req_state.text = self._decode_tokens(req_state.token_ids)
 
-            # Build RequestOutput snapshot
+            # Build RequestOutput snapshot (uses external_req_id)
             req_output = req_state.make_request_output(prev_text=prev_text)
 
             # FINAL_ONLY: only emit on completion
@@ -227,11 +244,14 @@ class OutputProcessor:
             if not req_state.finished:
                 req_state.sent_tokens_offset = len(req_state.token_ids)
 
-            # Track finished requests
+            # Flip is_prefilling AFTER stats computation for this request
+            req_state.is_prefilling = False
+
+            # Track finished requests (by internal ID)
             if req_state.finished:
                 self._finished_ids.append(req_state.request.request_id)
 
-        return streaming_outputs
+        return OutputProcessorOutput(request_outputs=streaming_outputs)
 
     def _decode_tokens(self, token_ids: list[int]) -> str:
         """Decode token IDs to text."""
@@ -243,11 +263,25 @@ class OutputProcessor:
         return ""
 
     def get_and_clear_finished_ids(self) -> list[str]:
-        """Return and clear the list of finished request IDs."""
+        """Return and clear the list of finished internal request IDs."""
         finished = self._finished_ids
         self._finished_ids = []
         return finished
 
     def remove_request(self, request_id: str) -> None:
-        """Remove finished request record."""
-        self._requests.pop(request_id, None)
+        """Remove finished request record by internal request_id."""
+        req_state = self._requests.pop(request_id, None)
+        if req_state:
+            external = req_state.external_req_id
+            if external in self.external_req_ids:
+                self.external_req_ids[external].remove(request_id)
+                if not self.external_req_ids[external]:
+                    del self.external_req_ids[external]
+
+    def update_scheduler_stats(self, scheduler_stats: dict | None):
+        pass
+
+    def propagate_error(self, e: Exception):
+        for _, state in self._requests.items():
+            if state.queue is not None:
+                state.queue.put(e)

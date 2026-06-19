@@ -20,13 +20,15 @@ class EngineArgs:
     load_format: str = "auto"
     seed: int = 42
     max_num_batched_tokens: int | None = None
-    max_num_seqs: int = 128
+    max_num_seqs: int = 64
     gpu_memory_utilization: float = 0.92
     enforce_eager: bool = False
     distributed_executor_backend: str | None = None
     cudagraph_capture_size: list[int] | None = None
     cudagraph_mode: str = "full"
     default_max_tokens: int | None = None
+    enable_async_scheduling: bool = True
+    batch_queue_size: int = 2
 
     def create_engine_config(self) -> VkwrConfig:
         mc_kwargs: dict = {
@@ -48,6 +50,8 @@ class EngineArgs:
             max_num_batched_tokens=self.max_num_batched_tokens or 2048,
             max_num_seqs=self.max_num_seqs,
             default_max_tokens=self.default_max_tokens,
+            enable_async_scheduling=self.enable_async_scheduling,
+            batch_queue_size=self.batch_queue_size,
         )
 
         worker_config = GPUWorkerConfig(

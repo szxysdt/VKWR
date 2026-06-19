@@ -16,7 +16,7 @@ class RequestRunData:
     num_computed_tokens: int
     num_tokens: int
     sampling_params: SamplingParams
-    input_token_ids: list[int]
+    input_token_ids: list[int] | None
     state: list | None = None
     is_decode: bool = False
     is_last_prefill: bool = False

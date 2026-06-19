@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from vkwr.config.model import ModelConfig
 from vkwr.config.scheduler import SchedulerConfig
 from vkwr.engine.request import SamplingParams, VkwrRequest
-from vkwr.utils import generate_request_id
+from vkwr.utils import _random_uuid
 
 if TYPE_CHECKING:
     from vkwr.engine.tokenizer import RWKVTokenizer
@@ -22,9 +22,10 @@ class InputProcessor:
     1. Text to token IDs (via RWKVTokenizer)
     2. Inject eos_token_id (D4 fix)
     3. Optional length truncation (constrained by max_model_len / max_num_batched_tokens)
-    4. Create VkwrRequest
+    4. Create VkwrRequest + assign internal request ID
 
-    Aligned with vLLM architecture: InputProcessor is held only in LLMEngine, not in EngineCore.
+    Inspired by vLLM's architecture: InputProcessor lives at the LLMEngine layer,
+    not inside EngineCore.
     """
 
     def __init__(
@@ -35,6 +36,16 @@ class InputProcessor:
         self.model_config = model_config
         self.scheduler_config = scheduler_config
         self._tokenizer: RWKVTokenizer | None = None
+
+    @staticmethod
+    def assign_request_id(request: VkwrRequest) -> None:
+        """Replace the externally supplied request ID with an internal request ID
+        that adds 8 random characters to ensure uniqueness.
+
+        The user-provided ID is preserved as external_req_id for output.
+        """
+        request.external_req_id = request.request_id
+        request.request_id = f"{request.external_req_id}-{_random_uuid()[:8]}"
 
     def _ensure_tokenizer(self) -> RWKVTokenizer:
         if self._tokenizer is None:
@@ -58,22 +69,19 @@ class InputProcessor:
         """Process input and return VkwrRequest.
 
         Args:
-            request_id: Unique request identifier.
+            request_id: User-provided request identifier (becomes external_req_id).
             prompt: Original prompt (text or token IDs).
             sampling_params: Sampling parameters.
 
         Returns:
-            VkwrRequest instance.
+            VkwrRequest instance with internal request_id and external_req_id set.
 
         Raises:
-            ValueError: If prompt is empty or exceeds length limit.
+            ValueError: If prompt is empty or request_id is empty.
             RuntimeError: If attempting text encoding when tokenizer is unavailable.
         """
         if not request_id:
             raise ValueError("request_id cannot be empty")
-
-        # Append random suffix to prevent collisions (aligned with vLLM input_processor).
-        request_id = generate_request_id(request_id)
 
         prompt_token_ids: list[int]
 
@@ -100,13 +108,18 @@ class InputProcessor:
         self._inject_eos_token_id(sampling_params)
         self._infer_max_tokens(sampling_params, prompt_token_ids)
 
-        return VkwrRequest(
+        request = VkwrRequest(
             request_id=request_id,
             prompt=prompt,
             prompt_token_ids=prompt_token_ids,
             sampling_params=sampling_params,
             arrival_time=time.monotonic(),
         )
+
+        # Assign internal request ID (appends random suffix).
+        self.assign_request_id(request)
+
+        return request
 
     def _get_max_prompt_len(self) -> int | None:
         """Get the maximum allowed prompt length.

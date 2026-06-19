@@ -37,7 +37,7 @@ class CUDAGraphManager:
         device: torch.device,
         emb_cpu: bool = False,
     ):
-        self.capture_shapes = capture_shapes or [(1,), (1, 1), (1, 1, 1, 1), (1,) * 8, (1,) * 16, (1,) * 32, (1,) * 64]
+        self.capture_shapes = capture_shapes or [(1,) * b for b in range(1, 65)]
         self.device = device
         self.emb_cpu = emb_cpu
         # shape_key (tuple[int]) -> (graph, output_logits)
@@ -100,7 +100,7 @@ class CUDAGraphManager:
                 output_logits = forward_fn(captured_x, state, path, query_start_loc, req_id, max_t, B)
 
         self._entries[seq_lens] = (graph, output_logits)
-        logger.info("Captured CUDA Graph for shape seq_lens=%s (B=%d, total=%d)", seq_lens, B, total_tokens)
+        logger.debug("Captured CUDA Graph for shape B=%d", B)
 
     def replay(self, seq_lens: tuple[int]) -> torch.Tensor:
         """Replay CUDA Graph. Returns output logits tensor."""

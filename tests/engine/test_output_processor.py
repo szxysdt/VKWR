@@ -6,10 +6,7 @@ import pytest
 
 from vkwr.config.model import ModelConfig
 from vkwr.engine.output_processor import OutputProcessor
-from vkwr.engine.outputs import (
-    EngineCoreOutput,
-    EngineCoreOutputs,
-)
+from vkwr.engine.outputs import EngineCoreOutput
 from vkwr.engine.request import SamplingParams, VkwrRequest
 
 
@@ -63,33 +60,31 @@ class TestProcessOutputsIncremental:
         processor = OutputProcessor(model_config)
         processor.add_request(sample_request)
 
-        step1 = EngineCoreOutputs(
-            outputs=[
-                EngineCoreOutput(
-                    request_id="req-1",
-                    new_token_ids=[10, 20],
-                    new_logprobs=None,
-                    finish_reason=None,
-                )
-            ]
-        )
-        streaming = processor.process_outputs(step1)
+        step1 = [
+            EngineCoreOutput(
+                request_id="req-1",
+                new_token_ids=[10, 20],
+                new_logprobs=None,
+                finish_reason=None,
+            )
+        ]
+        result = processor.process_outputs(step1)
+        streaming = result.request_outputs
         assert len(streaming) == 1
         assert streaming[0].finished is False
         req_state = processor._requests["req-1"]
         assert req_state.token_ids == [10, 20]
 
-        step2 = EngineCoreOutputs(
-            outputs=[
-                EngineCoreOutput(
-                    request_id="req-1",
-                    new_token_ids=[30],
-                    new_logprobs=None,
-                    finish_reason=None,
-                )
-            ]
-        )
-        streaming = processor.process_outputs(step2)
+        step2 = [
+            EngineCoreOutput(
+                request_id="req-1",
+                new_token_ids=[30],
+                new_logprobs=None,
+                finish_reason=None,
+            )
+        ]
+        result = processor.process_outputs(step2)
+        streaming = result.request_outputs
         assert len(streaming) == 1
         assert streaming[0].finished is False
         assert req_state.token_ids == [10, 20, 30]
@@ -102,17 +97,16 @@ class TestProcessOutputsFinish:
         processor = OutputProcessor(model_config)
         processor.add_request(sample_request)
 
-        engine_out = EngineCoreOutputs(
-            outputs=[
-                EngineCoreOutput(
-                    request_id="req-1",
-                    new_token_ids=[10, 20],
-                    new_logprobs=None,
-                    finish_reason="length",
-                )
-            ]
-        )
-        finished = processor.process_outputs(engine_out)
+        engine_out = [
+            EngineCoreOutput(
+                request_id="req-1",
+                new_token_ids=[10, 20],
+                new_logprobs=None,
+                finish_reason="length",
+            )
+        ]
+        result = processor.process_outputs(engine_out)
+        finished = result.request_outputs
         assert len(finished) == 1
         assert finished[0].request_id == "req-1"
         assert finished[0].finished is True
@@ -124,18 +118,16 @@ class TestProcessOutputsUnknownRequest:
     def test_unknown_request_id_ignored(self, mock_get_tok, model_config, mock_tokenizer):
         mock_get_tok.return_value = mock_tokenizer
         processor = OutputProcessor(model_config)
-        engine_out = EngineCoreOutputs(
-            outputs=[
-                EngineCoreOutput(
-                    request_id="nonexistent",
-                    new_token_ids=[1],
-                    new_logprobs=None,
-                    finish_reason=None,
-                )
-            ]
-        )
-        finished = processor.process_outputs(engine_out)
-        assert len(finished) == 0
+        engine_out = [
+            EngineCoreOutput(
+                request_id="nonexistent",
+                new_token_ids=[1],
+                new_logprobs=None,
+                finish_reason=None,
+            )
+        ]
+        result = processor.process_outputs(engine_out)
+        assert len(result.request_outputs) == 0
 
 
 class TestProcessOutputsLogprobs:
@@ -145,29 +137,26 @@ class TestProcessOutputsLogprobs:
         processor = OutputProcessor(model_config)
         processor.add_request(sample_request)
 
-        engine_out = EngineCoreOutputs(
-            outputs=[
-                EngineCoreOutput(
-                    request_id="req-1",
-                    new_token_ids=[10],
-                    new_logprobs=[{10: -0.5}],
-                    finish_reason=None,
-                )
-            ]
-        )
+        engine_out = [
+            EngineCoreOutput(
+                request_id="req-1",
+                new_token_ids=[10],
+                new_logprobs=[{10: -0.5}],
+                finish_reason=None,
+            )
+        ]
         processor.process_outputs(engine_out)
 
-        engine_out2 = EngineCoreOutputs(
-            outputs=[
-                EngineCoreOutput(
-                    request_id="req-1",
-                    new_token_ids=[20],
-                    new_logprobs=[{20: -1.0}],
-                    finish_reason="length",
-                )
-            ]
-        )
-        finished = processor.process_outputs(engine_out2)
+        engine_out2 = [
+            EngineCoreOutput(
+                request_id="req-1",
+                new_token_ids=[20],
+                new_logprobs=[{20: -1.0}],
+                finish_reason="length",
+            )
+        ]
+        result = processor.process_outputs(engine_out2)
+        finished = result.request_outputs
         assert len(finished) == 1
         completion = finished[0].outputs[0]
         assert completion.logprobs is not None

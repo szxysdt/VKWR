@@ -60,5 +60,13 @@ class GPUWorker(WorkerBase):
         self.model_runner.warmup()
 
         if self.model_runner._cudagraph_enabled and self.model_runner.cudagraph_manager:
+            n_shapes = len(self.model_runner.cudagraph_manager.capture_shapes)
+            logger.info("Starting CUDA Graph capture: %d graphs for batch sizes 1~%d", n_shapes, n_shapes)
             for shape in self.model_runner.cudagraph_manager.capture_shapes:
                 self.model_runner._capture_for_shape(shape)
+            n = len(self.model_runner.cudagraph_manager._entries)
+            logger.info(
+                "CUDA Graph captured: %d graphs for batch sizes 1~%d",
+                n,
+                n,
+            )

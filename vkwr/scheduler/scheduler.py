@@ -308,6 +308,8 @@ class SimpleScheduler(SchedulerInterface):
         engine_outputs: dict[str, EngineCoreOutputs] = {}
 
         for req_id in scheduler_output.scheduled_req_ids:
+            if req_id not in self.running_output_tokens:
+                continue
             tokens = model_output.sampled_token_ids.get(req_id, [])
             self.running_output_tokens[req_id].extend(tokens)
 
