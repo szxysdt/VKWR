@@ -44,7 +44,7 @@ class RWKV7:
         self.emb_cache: dict[tuple[int, int], tuple[torch.Tensor, torch.Tensor]] = {}
 
         self.linear_dispatcher = RWKV7LinearDispatcher(self.config.C, self.weight_config)
-        self.cmix_dispatcher = RWKV7ChannelMixDispatcher(self.config.C, self.linear_dispatcher, model_dict=z)
+        self.cmix_dispatcher = RWKV7ChannelMixDispatcher(self.config.C, self.linear_dispatcher, model_dict=z, inference_config=self.inference_config)
         self.tmix_dispatcher = RWKV7TimeMixDispatcher(
             self.config.C, self.config.H, self.linear_dispatcher, model_dict=z, inference_config=self.inference_config
         )
