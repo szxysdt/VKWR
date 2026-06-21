@@ -374,17 +374,39 @@ void rwkv7_v3a_linear_wagv_rank_out_f16_launch(
 }
 
 std::vector<at::Tensor> linear_wag_rank_in_f16_cuda(
-    int64_t M, int64_t K, int64_t Rw, int64_t Ra, int64_t Rg,
     at::Tensor xw, at::Tensor xa, at::Tensor xg,
     at::Tensor w1_t, at::Tensor a1_t, at::Tensor g1_t) {
-  auto w1 = at::empty({M, Rw}, xw.options());
-  auto a1 = at::empty({M, Ra}, xa.options());
-  auto g1 = at::empty({M, Rg}, xg.options());
+  const int64_t k64 = xw.size(-1);
+  const int64_t rw64 = w1_t.size(0);
+  const int64_t ra64 = a1_t.size(0);
+  const int64_t rg64 = g1_t.size(0);
+  const int64_t m64 = xw.numel() / k64;
+
+  const int K = static_cast<int>(k64);
+  const int Rw = static_cast<int>(rw64);
+  const int Ra = static_cast<int>(ra64);
+  const int Rg = static_cast<int>(rg64);
+  const int M = static_cast<int>(m64);
+
+  std::vector<int64_t> w_sizes(xw.sizes().begin(), xw.sizes().end());
+  std::vector<int64_t> a_sizes(xw.sizes().begin(), xw.sizes().end());
+  std::vector<int64_t> g_sizes(xw.sizes().begin(), xw.sizes().end());
+  w_sizes.back() = rw64;
+  a_sizes.back() = ra64;
+  g_sizes.back() = rg64;
+
+  auto w1 = at::empty(w_sizes, xw.options());
+  auto a1 = at::empty(a_sizes, xa.options());
+  auto g1 = at::empty(g_sizes, xg.options());
+
+  if (M == 0 || K == 0) {
+    return {w1, a1, g1};
+  }
+
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
   rwkv7_v3a_linear_wag_rank_in_f16_launch(
       stream,
-      static_cast<int>(M), static_cast<int>(K),
-      static_cast<int>(Rw), static_cast<int>(Ra), static_cast<int>(Rg),
+      M, K, Rw, Ra, Rg,
       static_cast<const dtype*>(xw.data_ptr()),
       static_cast<const dtype*>(xa.data_ptr()),
       static_cast<const dtype*>(xg.data_ptr()),
@@ -398,18 +420,44 @@ std::vector<at::Tensor> linear_wag_rank_in_f16_cuda(
 }
 
 std::vector<at::Tensor> linear_wagv_rank_in_f16_cuda(
-    int64_t M, int64_t K, int64_t Rw, int64_t Ra, int64_t Rg, int64_t Rv,
     at::Tensor xw, at::Tensor xa, at::Tensor xg, at::Tensor xv,
     at::Tensor w1_t, at::Tensor a1_t, at::Tensor g1_t, at::Tensor v1_t) {
-  auto w1 = at::empty({M, Rw}, xw.options());
-  auto a1 = at::empty({M, Ra}, xa.options());
-  auto g1 = at::empty({M, Rg}, xg.options());
-  auto v1 = at::empty({M, Rv}, xv.options());
+  const int64_t k64 = xw.size(-1);
+  const int64_t rw64 = w1_t.size(0);
+  const int64_t ra64 = a1_t.size(0);
+  const int64_t rg64 = g1_t.size(0);
+  const int64_t rv64 = v1_t.size(0);
+  const int64_t m64 = xw.numel() / k64;
+
+  const int K = static_cast<int>(k64);
+  const int Rw = static_cast<int>(rw64);
+  const int Ra = static_cast<int>(ra64);
+  const int Rg = static_cast<int>(rg64);
+  const int Rv = static_cast<int>(rv64);
+  const int M = static_cast<int>(m64);
+
+  std::vector<int64_t> w_sizes(xw.sizes().begin(), xw.sizes().end());
+  std::vector<int64_t> a_sizes(xw.sizes().begin(), xw.sizes().end());
+  std::vector<int64_t> g_sizes(xw.sizes().begin(), xw.sizes().end());
+  std::vector<int64_t> v_sizes(xw.sizes().begin(), xw.sizes().end());
+  w_sizes.back() = rw64;
+  a_sizes.back() = ra64;
+  g_sizes.back() = rg64;
+  v_sizes.back() = rv64;
+
+  auto w1 = at::empty(w_sizes, xw.options());
+  auto a1 = at::empty(a_sizes, xa.options());
+  auto g1 = at::empty(g_sizes, xg.options());
+  auto v1 = at::empty(v_sizes, xv.options());
+
+  if (M == 0 || K == 0) {
+    return {w1, a1, g1, v1};
+  }
+
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
   rwkv7_v3a_linear_wagv_rank_in_f16_launch(
       stream,
-      static_cast<int>(M), static_cast<int>(K),
-      static_cast<int>(Rw), static_cast<int>(Ra), static_cast<int>(Rg), static_cast<int>(Rv),
+      M, K, Rw, Ra, Rg, Rv,
       static_cast<const dtype*>(xw.data_ptr()),
       static_cast<const dtype*>(xa.data_ptr()),
       static_cast<const dtype*>(xg.data_ptr()),
@@ -426,17 +474,40 @@ std::vector<at::Tensor> linear_wagv_rank_in_f16_cuda(
 }
 
 std::vector<at::Tensor> linear_wag_rank_out_f16_cuda(
-    int64_t M, int64_t C, int64_t Kw, int64_t Ka, int64_t Kg,
     at::Tensor w1, at::Tensor a1, at::Tensor g1,
     at::Tensor w2_t, at::Tensor a2_t, at::Tensor g2_t) {
-  auto w = at::empty({M, C}, w1.options());
-  auto a = at::empty({M, C}, a1.options());
-  auto g = at::empty({M, C}, g1.options());
+  const int64_t c64 = w2_t.size(0);
+  const int64_t kw64 = w1.size(-1);
+  const int64_t ka64 = a1.size(-1);
+  const int64_t kg64 = g1.size(-1);
+  const int64_t m64 = w1.numel() / kw64;
+
+  const int M = static_cast<int>(m64);
+  const int C = static_cast<int>(c64);
+  const int Kw = static_cast<int>(kw64);
+  const int Ka = static_cast<int>(ka64);
+  const int Kg = static_cast<int>(kg64);
+
+  std::vector<int64_t> out_sizes(w1.sizes().begin(), w1.sizes().end());
+  out_sizes.back() = c64;
+  auto w = at::empty(out_sizes, w1.options());
+
+  std::vector<int64_t> a_sizes(a1.sizes().begin(), a1.sizes().end());
+  a_sizes.back() = c64;
+  auto a = at::empty(a_sizes, a1.options());
+
+  std::vector<int64_t> g_sizes(g1.sizes().begin(), g1.sizes().end());
+  g_sizes.back() = c64;
+  auto g = at::empty(g_sizes, g1.options());
+
+  if (M == 0) {
+    return {w, a, g};
+  }
+
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
   rwkv7_v3a_linear_wag_rank_out_f16_launch(
       stream,
-      static_cast<int>(M), static_cast<int>(C),
-      static_cast<int>(Kw), static_cast<int>(Ka), static_cast<int>(Kg),
+      M, C, Kw, Ka, Kg,
       static_cast<const dtype*>(w1.data_ptr()),
       static_cast<const dtype*>(a1.data_ptr()),
       static_cast<const dtype*>(g1.data_ptr()),
@@ -450,19 +521,47 @@ std::vector<at::Tensor> linear_wag_rank_out_f16_cuda(
 }
 
 std::vector<at::Tensor> linear_wagv_rank_out_f16_cuda(
-    int64_t M, int64_t C, int64_t Kw, int64_t Ka, int64_t Kg, int64_t Kv,
     at::Tensor w1, at::Tensor a1, at::Tensor g1, at::Tensor v1,
     at::Tensor w2_t, at::Tensor a2_t, at::Tensor g2_t, at::Tensor v2_t,
     at::Tensor v, at::Tensor v_first, at::Tensor v0) {
-  auto w = at::empty({M, C}, w1.options());
-  auto a = at::empty({M, C}, a1.options());
-  auto g = at::empty({M, C}, g1.options());
-  auto v_out = at::empty({M, C}, v1.options());
+  const int64_t c64 = w2_t.size(0);
+  const int64_t kw64 = w1.size(-1);
+  const int64_t ka64 = a1.size(-1);
+  const int64_t kg64 = g1.size(-1);
+  const int64_t kv64 = v1.size(-1);
+  const int64_t m64 = w1.numel() / kw64;
+
+  const int M = static_cast<int>(m64);
+  const int C = static_cast<int>(c64);
+  const int Kw = static_cast<int>(kw64);
+  const int Ka = static_cast<int>(ka64);
+  const int Kg = static_cast<int>(kg64);
+  const int Kv = static_cast<int>(kv64);
+
+  std::vector<int64_t> w_sizes(w1.sizes().begin(), w1.sizes().end());
+  w_sizes.back() = c64;
+  auto w = at::empty(w_sizes, w1.options());
+
+  std::vector<int64_t> a_sizes(a1.sizes().begin(), a1.sizes().end());
+  a_sizes.back() = c64;
+  auto a = at::empty(a_sizes, a1.options());
+
+  std::vector<int64_t> g_sizes(g1.sizes().begin(), g1.sizes().end());
+  g_sizes.back() = c64;
+  auto g = at::empty(g_sizes, g1.options());
+
+  std::vector<int64_t> v_sizes(v1.sizes().begin(), v1.sizes().end());
+  v_sizes.back() = c64;
+  auto v_out = at::empty(v_sizes, v1.options());
+
+  if (M == 0) {
+    return {w, a, g, v_out};
+  }
+
   cudaStream_t stream = at::cuda::getCurrentCUDAStream();
   rwkv7_v3a_linear_wagv_rank_out_f16_launch(
       stream,
-      static_cast<int>(M), static_cast<int>(C),
-      static_cast<int>(Kw), static_cast<int>(Ka), static_cast<int>(Kg), static_cast<int>(Kv),
+      M, C, Kw, Ka, Kg, Kv,
       static_cast<const dtype*>(w1.data_ptr()),
       static_cast<const dtype*>(a1.data_ptr()),
       static_cast<const dtype*>(g1.data_ptr()),

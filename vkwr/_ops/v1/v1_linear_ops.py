@@ -1,6 +1,6 @@
 import torch
 
-from vkwr import _v1_linear_C
+from vkwr import _v1_linear_C  # noqa: F401
 
 
 @torch.library.register_fake("vkwr_v1_linear::linear_f16")
