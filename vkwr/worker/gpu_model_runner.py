@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import itertools
 import logging
 from typing import TYPE_CHECKING
@@ -57,6 +58,7 @@ class GPUModelRunner:
         self._uniform_query_start_loc: torch.Tensor | None = None
         self._uniform_req_id: torch.Tensor | None = None
         self._uniform_tokens: torch.Tensor | None = None
+        self._uniform_slot_indices: torch.Tensor | None = None
         self._uniform_x: torch.Tensor | None = None
         self._uniform_x_host: torch.Tensor | None = None
         self._emb_buf_idx: int = 0
@@ -76,6 +78,7 @@ class GPUModelRunner:
 
         # Last sampled token per slot (GPU cache for decode input)
         self._last_sampled_token: torch.Tensor | None = None
+        self._decode_tokens_min_prev: torch.Tensor | None = None
 
     def load_model(self) -> None:
         """Load model weights, initialize RWKV7Model + allocate state buffers"""
@@ -146,6 +149,7 @@ class GPUModelRunner:
         self._uniform_query_start_loc = torch.arange(self.max_num_seqs + 1, dtype=torch.int32, device=self.device)
         self._uniform_req_id = torch.arange(self.max_num_seqs, dtype=torch.int32, device=self.device)
         self._uniform_tokens = torch.empty((self.max_num_seqs,), dtype=torch.long, device=self.device)
+        self._uniform_slot_indices = torch.empty((self.max_num_seqs,), dtype=torch.long, device=self.device)
         self._uniform_x = torch.empty(
             (self.max_num_seqs, self.model.config.C),
             dtype=self.model.inference_config.dtype,
@@ -247,20 +251,6 @@ class GPUModelRunner:
         is_prefill = any(not scheduler_output.request_data[rid].is_decode for rid in scheduler_output.scheduled_req_ids)
         if is_prefill:
             logger.info("Prefill batch: total_tokens=%d, max_t=%d, B=%d", tokens.numel(), max_t, len(scheduler_output.scheduled_req_ids))
-            try:
-                from vkwr.engine.tokenizer import get_tokenizer
-
-                tok = get_tokenizer(self.model_config.tokenizer)
-                if tok:
-                    for req_id in scheduler_output.scheduled_req_ids:
-                        run_data = scheduler_output.request_data[req_id]
-                        if not run_data.is_decode:
-                            text = tok.decode(run_data.input_token_ids)
-                            if len(text) > 200:
-                                text = text[:200] + "..."
-                            logger.info("Prefill [%s] text: %s", req_id, text)
-            except Exception:
-                pass
 
         with torch.inference_mode():
             logits = self.model.forward(tokens, state, query_start_loc, max_t)
@@ -288,25 +278,29 @@ class GPUModelRunner:
             self._decode_state_wkv[:, i].copy_(self._state_wkv[:, slot])
             self._decode_state_elapsed[i].copy_(self._state_elapsed[slot])
 
-        # 2. Get input tokens from GPU cache (1 per slot)
-        decode_tokens = []
-        for i in range(B):
-            slot = slot_indices[i]
-            token = int(self._last_sampled_token[slot])
-            if token < 0:
-                raise RuntimeError(f"slot {slot} has no sampled token. This should not happen if is_last_prefill sampling is correct.")
-            decode_tokens.append(token)
+        # 2. Gather input tokens from GPU cache — keep on GPU, no .tolist()
+        self._uniform_slot_indices[:B].copy_(
+            torch.as_tensor(slot_indices, dtype=torch.long, device="cpu"),
+            non_blocking=True,
+        )
+        decode_tokens_gpu = self._last_sampled_token[self._uniform_slot_indices[:B]]
 
-        # 3. Forward: CUDA Graph replay OR eager fallback
+        # Deferred one-step validation: only sync 8-byte scalar
+        if hasattr(self, "_decode_tokens_min_prev") and self._decode_tokens_min_prev is not None:
+            if self._decode_tokens_min_prev.item() < 0:
+                raise RuntimeError("Some slots have no sampled token. This should not happen if is_last_prefill sampling is correct.")
+        self._decode_tokens_min_prev = decode_tokens_gpu.min()
+
+        # 3. Forward: CUDA Graph replay OR eager fallback (decode_tokens stays on GPU)
         seq_lens = tuple([1] * B)
         entry = self.cudagraph_manager.get_graph(seq_lens) if self._cudagraph_enabled else None
         if entry is None:
-            logits = self._execute_uniform_decode_eager(B, decode_tokens)
+            logits = self._execute_uniform_decode_eager(B, decode_tokens_gpu)
         else:
             if self.model.emb_cpu:
-                self._prepare_uniform_decode_cpu_emb(B, decode_tokens)
+                self._prepare_uniform_decode_cpu_emb(B, decode_tokens_gpu)
             else:
-                self._prepare_uniform_decode_gpu_emb(B, decode_tokens)
+                self._uniform_tokens[:B].copy_(decode_tokens_gpu, non_blocking=True)
             logits = self.cudagraph_manager.replay(seq_lens)
 
         # 4. Scatter temp buffer back to global state (one slot at a time)
@@ -323,14 +317,13 @@ class GPUModelRunner:
         model_output = ModelRunnerOutput(sampled_token_ids={}, logits=logits)
         return self.sample_tokens(model_output, scheduler_output)
 
-    def _execute_uniform_decode_eager(self, B: int, decode_tokens: list[int]) -> torch.Tensor:
+    def _execute_uniform_decode_eager(self, B: int, decode_tokens: torch.Tensor) -> torch.Tensor:
         """Eager fallback for uniform decode when CUDA Graph unavailable."""
         if self.model.emb_cpu:
             self._prepare_uniform_decode_cpu_emb(B, decode_tokens)
             x = self._uniform_x[:B]
         else:
-            tokens = torch.as_tensor(decode_tokens, dtype=torch.long, device=self.device)
-            x = self.model.embed(tokens)
+            x = self.model.embed(decode_tokens[:B])
 
         state = [
             self._decode_state_shift[:, :, :B],
@@ -346,19 +339,12 @@ class GPUModelRunner:
             logits = self.model.forward_from_x(x, state, path, query_start_loc, req_id, 1, B)
         return logits
 
-    def _prepare_uniform_decode_gpu_emb(self, B: int, decode_tokens: list[int]) -> None:
-        """GPU emb mode: update token buffer before replay."""
-        self._uniform_tokens[:B].copy_(
-            torch.as_tensor(decode_tokens, dtype=torch.long, device="cpu"),
-            non_blocking=True,
-        )
-
-    def _prepare_uniform_decode_cpu_emb(self, B: int, decode_tokens: list[int]) -> None:
+    def _prepare_uniform_decode_cpu_emb(self, B: int, decode_tokens: torch.Tensor) -> None:
         """CPU emb mode: embed outside graph, copy to x buffer before replay."""
         idx = self._emb_buf_idx & 1
         buf = self._uniform_x_host[idx]
         self._emb_dma_event.wait()
-        flat = torch.as_tensor(decode_tokens, dtype=torch.long, device="cpu").reshape(-1)
+        flat = decode_tokens[:B].cpu()
         torch.index_select(self.model.z["emb.weight"], 0, flat, out=buf[:B])
         self._uniform_x[:B].copy_(
             buf[:B],
@@ -389,11 +375,13 @@ class GPUModelRunner:
 
         sampled, logprobs = self.sampler(logits.float(), sampling_params_list)
 
+        sampled_list = sampled.tolist()
+
         sampled_token_ids = {}
-        for i, req_id in enumerate(req_ids):
+        for idx, req_id in enumerate(req_ids):
             run_data = scheduler_output.request_data.get(req_id)
             if run_data and (run_data.is_decode or run_data.is_last_prefill):
-                sampled_token_ids[req_id] = [sampled[i].item()]
+                sampled_token_ids[req_id] = [sampled_list[idx]]
 
         # Write last sampled token to per-slot cache.
         # slot_index here is post-reorder. Since _last_sampled_token
@@ -607,3 +595,33 @@ class GPUModelRunner:
         gpu_mem_total = torch.cuda.get_device_properties(self.device).total_memory
         available_mem = int(gpu_mem_total * self.config.worker_config.gpu_memory_utilization)
         return available_mem
+
+    def shutdown(self) -> None:
+        """Release all GPU resources held by this runner."""
+        self.model = None
+        self.sampler = None
+        self.cudagraph_manager = None
+        self.state_cache = None
+        self._state_shift = None
+        self._state_wkv = None
+        self._state_elapsed = None
+        self._decode_state_shift = None
+        self._decode_state_wkv = None
+        self._decode_state_elapsed = None
+        self._input_ids = None
+        self._query_start_loc = None
+        self._input_ids_host = None
+        self._query_start_loc_host = None
+        self._scatter_idx = None
+        self._uniform_query_start_loc = None
+        self._uniform_req_id = None
+        self._uniform_tokens = None
+        self._uniform_slot_indices = None
+        self._uniform_x = None
+        self._uniform_x_host = None
+        self._emb_dma_event = None
+        self._last_sampled_token = None
+        self._decode_tokens_min_prev = None
+
+        gc.collect()
+        torch.cuda.empty_cache()

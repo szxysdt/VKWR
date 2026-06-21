@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, HTTPException
@@ -308,14 +309,14 @@ def create_app(engine_args: EngineArgs) -> FastAPI:
     Returns:
         A FastAPI application instance.
     """
-    app = FastAPI(title="VKWR API", version="0.1.0")
-
     async_engine = AsyncLLMEngine.from_engine_args(engine_args)
-    async_engine._ensure_engine()
 
-    @app.on_event("shutdown")
-    async def shutdown_event():
+    @asynccontextmanager
+    async def lifespan(app):
+        yield
         await async_engine.shutdown()
+
+    app = FastAPI(title="VKWR API", version="0.1.0", lifespan=lifespan)
 
     @app.get("/v1/models")
     async def models():

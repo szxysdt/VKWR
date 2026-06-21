@@ -33,7 +33,7 @@ def _is_ninja_available() -> bool:
 def _get_mem_available_kb() -> int | None:
     """Read MemAvailable from /proc/meminfo, return value in kB or None."""
     try:
-        with open("/proc/meminfo", "r") as f:
+        with open("/proc/meminfo") as f:
             for line in f:
                 if line.startswith("MemAvailable:"):
                     parts = line.split()

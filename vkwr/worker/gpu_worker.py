@@ -70,3 +70,8 @@ class GPUWorker(WorkerBase):
                 n,
                 n,
             )
+
+    def shutdown(self) -> None:
+        if self.model_runner is not None:
+            self.model_runner.shutdown()
+            self.model_runner = None

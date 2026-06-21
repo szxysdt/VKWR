@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from vkwr.config.engine import VkwrConfig
-    from vkwr.engine.outputs import EngineCoreOutputs, RequestOutput
+    from vkwr.engine.core_client import EngineCoreClient
+    from vkwr.engine.outputs import RequestOutput
     from vkwr.engine.request import SamplingParams
 
 logger = logging.getLogger(__name__)
@@ -15,31 +16,44 @@ class LLMEngine:
     """Public API for the LLM inference engine.
 
     Responsibilities:
-    1. Manage lifecycle of EngineCore, InputProcessor, OutputProcessor
+    1. Manage lifecycle of EngineCoreClient, InputProcessor, OutputProcessor
     2. Provide add_request / step / abort_request / has_unfinished_requests interface
     3. Handle request input (tokenize, EOS injection) and output (detokenize, text concatenation)
 
     Inspired by vLLM's architecture: LLMEngine owns InputProcessor/OutputProcessor
-    at the API boundary, while EngineCore handles only the compute loop.
+    at the API boundary, while EngineCoreClient handles only the compute loop.
     """
 
-    def __init__(self, config: VkwrConfig):
+    def __init__(self, config: VkwrConfig, multiprocess_mode: bool = False):
         self.config = config
 
-        from vkwr.engine.core import EngineCore
+        from vkwr.engine.core_client import EngineCoreClient
         from vkwr.engine.input_processor import InputProcessor
         from vkwr.engine.output_processor import OutputProcessor
 
-        self.engine_core = EngineCore(config)
-        self.input_processor = InputProcessor(config.model_config, config.scheduler_config)
-        self.output_processor = OutputProcessor(config.model_config)
-        self.engine_core.initialize()
+        tokenizer = None
+        if not config.model_config.skip_tokenizer_init:
+            from vkwr.engine.tokenizer import get_tokenizer
+
+            tokenizer = get_tokenizer(config.model_config.tokenizer)
+        else:
+            logger.warning("Tokenizer initialization skipped. Text prompts will fail, and outputs will not contain decoded text.")
+
+        self.engine_core: EngineCoreClient = EngineCoreClient.make_client(
+            multiprocess_mode=multiprocess_mode,
+            asyncio_mode=False,
+            vkwr_config=config,
+            log_stats=True,
+        )
+        self.input_processor = InputProcessor(config.model_config, config.scheduler_config, tokenizer=tokenizer)
+        self.output_processor = OutputProcessor(config.model_config, tokenizer=tokenizer)
 
     @classmethod
     def from_engine_args(cls, engine_args) -> LLMEngine:
         """Create an LLMEngine instance from EngineArgs."""
         config = engine_args.create_engine_config()
-        return cls(config)
+        multiprocess_mode = getattr(engine_args, "enable_multiprocessing", False)
+        return cls(config, multiprocess_mode=multiprocess_mode)
 
     def add_request(
         self,
@@ -63,10 +77,18 @@ class LLMEngine:
             ValueError: If prompt is empty or request_id is empty.
             RuntimeError: If attempting text encoding when tokenizer is unavailable.
         """
-        request = self.input_processor.process_input(request_id, prompt, sampling_params)
-        self.output_processor.add_request(request, collector)
-        self.engine_core.add_request(request)
-        return request.request_id
+        vkwr_request = self.input_processor.process_input(request_id, prompt, sampling_params)
+        self.output_processor.add_request(vkwr_request, collector)
+
+        from vkwr.engine.core_request import EngineCoreRequest
+
+        core_request = EngineCoreRequest(
+            request_id=vkwr_request.request_id,
+            prompt_token_ids=vkwr_request.prompt_token_ids,
+            sampling_params=sampling_params,
+        )
+        self.engine_core.add_request(core_request)
+        return vkwr_request.request_id
 
     def step(self) -> list[RequestOutput]:
         """Execute one inference step, returning streaming request outputs.
@@ -77,15 +99,11 @@ class LLMEngine:
 
         Callers should check output.finished to know if a request has completed.
         """
-        outputs_dict, model_executed = self.engine_core.step_fn()
-        self.engine_core.post_step(model_executed)
+        engine_core_outputs = self.engine_core.get_output()
 
-        if outputs_dict is None:
-            return []
-        if not outputs_dict:
+        if not engine_core_outputs.outputs:
             return []
 
-        engine_core_outputs = outputs_dict.get(0) or EngineCoreOutputs()
         processed = self.output_processor.process_outputs(
             engine_core_outputs.outputs,
             engine_core_timestamp=engine_core_outputs.timestamp,
@@ -93,8 +111,7 @@ class LLMEngine:
         self.output_processor.update_scheduler_stats(engine_core_outputs.scheduler_stats)
 
         if processed.reqs_to_abort:
-            for rid in processed.reqs_to_abort:
-                self.engine_core.abort_request(rid)
+            self.engine_core.abort_requests(processed.reqs_to_abort)
 
         for req_id in self.output_processor.get_and_clear_finished_ids():
             self.output_processor.remove_request(req_id)
@@ -113,16 +130,36 @@ class LLMEngine:
         return [request_id]
 
     def abort_request(self, request_id: str) -> None:
-        """Abort the specified request (by internal or external ID)."""
-        for rid in self._resolve_internal_ids(request_id):
-            self.engine_core.abort_request(rid)
-            self.output_processor.remove_request(rid)
+        """Abort the specified request (by internal or external ID).
+
+        Bilateral abort: first produce FINISHED_ABORTED output in OutputProcessor
+        (unblocks any waiting collectors), then notify EngineCore to stop scheduling.
+        """
+        internal_ids = self._resolve_internal_ids(request_id)
+        self.output_processor.abort_requests(internal_ids)
+        self.engine_core.abort_requests(internal_ids)
+
+    def abort_requests(self, request_ids: list[str]) -> None:
+        """Abort multiple requests (by internal or external IDs).
+
+        Bilateral abort: first produce FINISHED_ABORTED output in OutputProcessor,
+        then notify EngineCore to stop scheduling.
+        """
+        all_internal_ids: list[str] = []
+        for rid in request_ids:
+            all_internal_ids.extend(self._resolve_internal_ids(rid))
+        self.output_processor.abort_requests(all_internal_ids)
+        self.engine_core.abort_requests(all_internal_ids)
 
     def has_unfinished_requests(self) -> bool:
         """Check if there are unfinished requests."""
-        return self.engine_core.has_unfinished_requests()
+        return len(self.output_processor._requests) > 0
 
     def remove_request(self, request_id: str) -> None:
         """Remove finished request record from output processor (by internal or external ID)."""
         for rid in self._resolve_internal_ids(request_id):
             self.output_processor.remove_request(rid)
+
+    def shutdown(self) -> None:
+        """Shutdown the engine."""
+        self.engine_core.shutdown()

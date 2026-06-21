@@ -32,10 +32,11 @@ class InputProcessor:
         self,
         model_config: ModelConfig,
         scheduler_config: SchedulerConfig | None = None,
+        tokenizer: RWKVTokenizer | None = None,
     ):
         self.model_config = model_config
         self.scheduler_config = scheduler_config
-        self._tokenizer: RWKVTokenizer | None = None
+        self._tokenizer: RWKVTokenizer | None = tokenizer
 
     @staticmethod
     def assign_request_id(request: VkwrRequest) -> None:
@@ -47,18 +48,8 @@ class InputProcessor:
         request.external_req_id = request.request_id
         request.request_id = f"{request.external_req_id}-{_random_uuid()[:8]}"
 
-    def _ensure_tokenizer(self) -> RWKVTokenizer:
-        if self._tokenizer is None:
-            from vkwr.engine.tokenizer import get_tokenizer
-
-            tok = get_tokenizer(self.model_config.tokenizer)
-            if tok is None:
-                raise RuntimeError("Cannot load RWKV tokenizer. Set ModelConfig.tokenizer to the path of rwkv_vocab_v20230424.txt.")
-            self._tokenizer = tok
+    def get_tokenizer(self) -> RWKVTokenizer | None:
         return self._tokenizer
-
-    def get_tokenizer(self) -> RWKVTokenizer:
-        return self._ensure_tokenizer()
 
     def process_input(
         self,
@@ -88,7 +79,9 @@ class InputProcessor:
         if isinstance(prompt, str):
             if not prompt:
                 raise ValueError("prompt cannot be empty")
-            tokenizer = self._ensure_tokenizer()
+            tokenizer = self.get_tokenizer()
+            if tokenizer is None:
+                raise RuntimeError("Cannot encode text prompt — tokenizer unavailable. Set ModelConfig.tokenizer or use skip_tokenizer_init=False.")
             prompt_token_ids = tokenizer.encode(prompt)
         else:
             prompt_token_ids = list(prompt)
@@ -139,21 +132,17 @@ class InputProcessor:
         """
         if sampling_params.eos_token_id is not None:
             return
-        try:
-            tokenizer = self._ensure_tokenizer()
-            eos_id = tokenizer.eos_token_id
-            if eos_id is not None:
-                sampling_params.eos_token_id = eos_id
-                return
-        except RuntimeError:
-            pass
+        tokenizer = self.get_tokenizer()
+        if tokenizer is not None and tokenizer.eos_token_id is not None:
+            sampling_params.eos_token_id = tokenizer.eos_token_id
+            return
         if self.scheduler_config is not None:
             sampling_params.eos_token_id = self.scheduler_config.eos_token_id
         else:
             sampling_params.eos_token_id = 0
 
     def _infer_max_tokens(self, sampling_params: SamplingParams, prompt_token_ids: list[int]) -> None:
-        """Infer max_tokens value (aligned with vLLM behavior).
+        """Infer max_tokens value.
 
         Priority:
         1. Request explicitly provides max_tokens.

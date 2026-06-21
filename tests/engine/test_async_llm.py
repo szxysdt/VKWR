@@ -10,7 +10,7 @@ from vkwr.config.model import ModelConfig
 from vkwr.engine.async_llm import AsyncLLMEngine
 from vkwr.engine.exceptions import EngineDeadError
 from vkwr.engine.output_processor import RequestOutputCollector
-from vkwr.engine.outputs import RequestOutput
+from vkwr.engine.outputs import EngineCoreOutputs, RequestOutput
 from vkwr.engine.request import RequestOutputKind, SamplingParams
 
 # ── Helpers ───────────────────────────────────────────────────────────
@@ -50,27 +50,43 @@ def _make_request_output(
     )
 
 
+def _run(coroutine):
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(coroutine)
+    finally:
+        loop.close()
+
+
 # ── Properties ───────────────────────────────────────────────────────
 
 
 class TestAsyncLLMEngineProperties:
-    def test_is_running_property_before_start(self):
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_is_running_property_before_start(self, mock_make: MagicMock):
+        mock_make.return_value = MagicMock()
         engine = AsyncLLMEngine(_make_config())
-        assert engine.is_running is False
+        assert engine.is_running is True
 
-    def test_is_stopped_property(self):
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_is_stopped_property(self, mock_make: MagicMock):
+        mock_make.return_value = MagicMock()
         engine = AsyncLLMEngine(_make_config())
         assert engine.is_stopped is False
         engine._errored = True
         assert engine.is_stopped is True
 
-    def test_errored_property(self):
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_errored_property(self, mock_make: MagicMock):
+        mock_make.return_value = MagicMock()
         engine = AsyncLLMEngine(_make_config())
         assert engine.errored is False
         engine._errored = True
         assert engine.errored is True
 
-    def test_errored_when_task_done(self):
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_errored_when_task_done(self, mock_make: MagicMock):
+        mock_make.return_value = MagicMock()
         engine = AsyncLLMEngine(_make_config())
         loop = asyncio.new_event_loop()
         task = loop.create_task(asyncio.sleep(0))
@@ -80,10 +96,12 @@ class TestAsyncLLMEngineProperties:
         except asyncio.CancelledError:
             pass
         loop.close()
-        engine._engine_loop_task = task
+        engine._output_handler = task
         assert engine.errored is True
 
-    def test_dead_error_property(self):
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_dead_error_property(self, mock_make: MagicMock):
+        mock_make.return_value = MagicMock()
         engine = AsyncLLMEngine(_make_config())
         err = engine.dead_error
         assert isinstance(err, EngineDeadError)
@@ -93,68 +111,117 @@ class TestAsyncLLMEngineProperties:
 
 
 class TestCheckHealth:
-    def test_check_health_raises_when_errored(self):
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_check_health_raises_when_errored(self, mock_make: MagicMock):
+        mock_make.return_value = MagicMock()
+
         async def _test():
             engine = AsyncLLMEngine(_make_config())
             engine._errored = True
             with pytest.raises(EngineDeadError):
                 await engine.check_health()
 
-        asyncio.get_event_loop().run_until_complete(_test())
+        _run(_test())
 
-    def test_check_health_ok_when_not_errored(self):
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_check_health_ok_when_not_errored(self, mock_make: MagicMock):
+        mock_make.return_value = MagicMock()
+
         async def _test():
             engine = AsyncLLMEngine(_make_config())
             await engine.check_health()
 
-        asyncio.get_event_loop().run_until_complete(_test())
+        _run(_test())
 
 
 # ── abort ────────────────────────────────────────────────────────────
 
 
 class TestAbort:
-    @patch("vkwr.engine.llm_engine.LLMEngine")
-    def test_abort_single_string(self, MockLLMEngine):
-        mock_engine = MagicMock()
-        mock_engine.output_processor.external_req_ids = {}
-        MockLLMEngine.return_value = mock_engine
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_abort_single_string(self, mock_make: MagicMock):
+        mock_client = AsyncMock()
+        mock_make.return_value = mock_client
 
         engine = AsyncLLMEngine(_make_config())
-        engine._ensure_engine()
+        engine._output_processor.add_request(
+            MagicMock(request_id="req-1", external_req_id="req-1", sampling_params=SamplingParams(), prompt="test", prompt_token_ids=[1]),
+            None,
+        )
 
-        async def _test():
-            await engine.abort("req-1")
+        _run(engine.abort("req-1"))
+        mock_client.abort_requests.assert_called_once()
 
-        asyncio.get_event_loop().run_until_complete(_test())
-        mock_engine.engine_core.abort_request.assert_called_once_with("req-1")
-
-    @patch("vkwr.engine.llm_engine.LLMEngine")
-    def test_abort_batch(self, MockLLMEngine):
-        mock_engine = MagicMock()
-        mock_engine.output_processor.external_req_ids = {}
-        MockLLMEngine.return_value = mock_engine
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_abort_batch(self, mock_make: MagicMock):
+        mock_client = AsyncMock()
+        mock_make.return_value = mock_client
 
         engine = AsyncLLMEngine(_make_config())
-        engine._ensure_engine()
+        for rid in ["req-1", "req-2", "req-3"]:
+            engine._output_processor.add_request(
+                MagicMock(request_id=rid, external_req_id=rid, sampling_params=SamplingParams(), prompt="test", prompt_token_ids=[1]),
+                None,
+            )
 
-        async def _test():
-            await engine.abort(["req-1", "req-2", "req-3"])
+        _run(engine.abort(["req-1", "req-2", "req-3"]))
+        mock_client.abort_requests.assert_called_once()
 
-        asyncio.get_event_loop().run_until_complete(_test())
-        assert mock_engine.engine_core.abort_request.call_count == 3
-        calls = [c[0][0] for c in mock_engine.engine_core.abort_request.call_args_list]
-        assert calls == ["req-1", "req-2", "req-3"]
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_abort_produces_finished_abort_output(self, mock_make: MagicMock):
+        """abort() pushes FINISHED_ABORTED output to collector, unblocking generate()."""
+        mock_client = AsyncMock()
+        mock_make.return_value = mock_client
+
+        engine = AsyncLLMEngine(_make_config())
+        from vkwr.engine.request import VkwrRequest
+
+        req = VkwrRequest(
+            request_id="req-1-abc",
+            prompt="test",
+            prompt_token_ids=[1, 2],
+            sampling_params=SamplingParams(output_kind=RequestOutputKind.DELTA),
+        )
+        req.external_req_id = "req-1"
+        collector = RequestOutputCollector(RequestOutputKind.DELTA, "req-1")
+        engine._output_processor.add_request(req, collector)
+
+        _run(engine.abort("req-1"))
+
+        out = collector.get_nowait()
+        assert out is not None
+        assert out.finished is True
+        assert out.finish_reason == "abort"
+
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_abort_resolves_external_id(self, mock_make: MagicMock):
+        """abort() resolves external request ID to internal ID(s)."""
+        mock_client = AsyncMock()
+        mock_make.return_value = mock_client
+
+        engine = AsyncLLMEngine(_make_config())
+        from vkwr.engine.request import VkwrRequest
+
+        req = VkwrRequest(
+            request_id="req-1-xyz",
+            prompt="test",
+            prompt_token_ids=[1, 2],
+            sampling_params=SamplingParams(),
+        )
+        req.external_req_id = "ext-id"
+        engine._output_processor.add_request(req, None)
+
+        _run(engine.abort("ext-id"))
+        mock_client.abort_requests.assert_called_once_with(["req-1-xyz"])
 
 
 # ── add_request ──────────────────────────────────────────────────────
 
 
 class TestAddRequest:
-    @patch("vkwr.engine.llm_engine.LLMEngine")
-    def test_add_request_errored_raises(self, MockLLMEngine):
-        mock_engine = MagicMock()
-        MockLLMEngine.return_value = mock_engine
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_add_request_errored_raises(self, mock_make: MagicMock):
+        mock_make.return_value = MagicMock()
 
         engine = AsyncLLMEngine(_make_config())
         engine._errored = True
@@ -163,27 +230,31 @@ class TestAddRequest:
             with pytest.raises(EngineDeadError):
                 await engine.add_request("req-1", "prompt", SamplingParams())
 
-        asyncio.get_event_loop().run_until_complete(_test())
+        _run(_test())
 
-    @patch("vkwr.engine.llm_engine.LLMEngine")
-    def test_add_request_returns_collector(self, MockLLMEngine):
-        mock_engine = MagicMock()
-        mock_req = MagicMock(request_id="req-1")
-        mock_engine.input_processor.process_input.return_value = mock_req
-        MockLLMEngine.return_value = mock_engine
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_add_request_returns_collector(self, mock_make: MagicMock):
+        """add_request creates collector, sends EngineCoreRequest, starts output handler."""
+        mock_client = AsyncMock()
+        mock_make.return_value = mock_client
+
+        # Make get_output_async raise EngineDeadError immediately so the
+        # background _run_output_handler task exits and doesn't hang.
+        mock_client.get_output_async = AsyncMock(side_effect=EngineDeadError())
 
         engine = AsyncLLMEngine(_make_config())
 
         async def _test():
             sampling_params = SamplingParams(output_kind=RequestOutputKind.DELTA)
-            collector = await engine.add_request("req-1", "hello", sampling_params)
+            collector = await engine.add_request("req-1", [1, 2, 3], sampling_params)
             assert isinstance(collector, RequestOutputCollector)
             assert collector.request_id == "req-1"
-            mock_engine.input_processor.process_input.assert_called_once()
-            mock_engine.output_processor.add_request.assert_called_once()
-            mock_engine.engine_core.add_request.assert_called_once()
+            mock_client.add_request.assert_called_once()
 
-        asyncio.get_event_loop().run_until_complete(_test())
+            # Let the background task terminate
+            await asyncio.sleep(0.05)
+
+        _run(_test())
 
 
 # ── generate lifecycle ───────────────────────────────────────────────
@@ -231,7 +302,7 @@ class TestGenerateLifecycle:
             assert results[0].finished is False
             assert results[1].finished is True
 
-        asyncio.new_event_loop().run_until_complete(_test())
+        _run(_test())
 
     def test_generate_handles_cancelled_error(self) -> None:
         """When generator is cancelled, request is aborted."""
@@ -254,22 +325,24 @@ class TestGenerateLifecycle:
             with pytest.raises(asyncio.CancelledError):
                 await cancel_task
 
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(_test())
-        loop.close()
+        _run(_test())
         assert mock_engine.abort.called
 
     def test_generate_propagates_engine_dead_error(self) -> None:
-        """EngineDeadError is re-raised, no abort."""
-        engine = AsyncLLMEngine(_make_config())
-        engine._errored = True
+        """EngineDeadError is re-raised when add_request fails due to errored state."""
+        mock_engine = _make_mock_async_engine()
 
         async def _test() -> None:
+            async def _mock_add(*a, **kw) -> RequestOutputCollector:
+                raise EngineDeadError()
+
+            mock_engine.add_request = _mock_add  # type: ignore[assignment]
+
             with pytest.raises(EngineDeadError):
-                async for _ in engine.generate("hello", SamplingParams(output_kind=RequestOutputKind.DELTA), "req-1"):
+                async for _ in mock_engine.generate("hello", SamplingParams(output_kind=RequestOutputKind.DELTA), "req-1"):
                     pass
 
-        asyncio.new_event_loop().run_until_complete(_test())
+        _run(_test())
 
     def test_generate_raises_engine_generate_error(self) -> None:
         """Unexpected exception wraps to EngineGenerateError, aborts."""
@@ -291,25 +364,226 @@ class TestGenerateLifecycle:
                 async for _ in mock_engine.generate("hello", SamplingParams(), "req-1"):
                     pass
 
-        asyncio.new_event_loop().run_until_complete(_test())
+        _run(_test())
         assert mock_engine.abort.called
 
-    @patch("vkwr.engine.llm_engine.LLMEngine")
-    def test_add_request_with_collector(self, mock_llm: MagicMock) -> None:
-        """add_request creates a collector and registers it with output_processor."""
-        mock_engine_obj = MagicMock()
-        mock_llm.return_value = mock_engine_obj
-        mock_req = MagicMock(request_id="req-1", prompt="test", sampling_params=SamplingParams())
-        mock_engine_obj.input_processor.process_input.return_value = mock_req
+
+# ── _run_output_handler ──────────────────────────────────────────────
+
+
+class TestRunOutputHandler:
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_output_handler_processes_outputs(self, mock_make: MagicMock) -> None:
+        """_run_output_handler processes EngineCoreOutputs and pushes to collectors."""
+        mock_client = AsyncMock()
+        mock_make.return_value = mock_client
 
         engine = AsyncLLMEngine(_make_config())
 
-        async def _test() -> None:
-            collector = await engine.add_request("req-1", "test", SamplingParams())
-            assert isinstance(collector, RequestOutputCollector)
-            mock_engine_obj.output_processor.add_request.assert_called_once_with(mock_req, collector)
+        from vkwr.engine.outputs import EngineCoreOutput
 
-        asyncio.new_event_loop().run_until_complete(_test())
+        outputs = EngineCoreOutputs(
+            outputs=[
+                EngineCoreOutput(
+                    request_id="req-1-abc",
+                    new_token_ids=[42],
+                    finish_reason=None,
+                )
+            ]
+        )
+        # Return one valid output, then raise EngineDeadError to terminate
+        mock_client.get_output_async = AsyncMock(side_effect=[outputs, EngineDeadError()])
+
+        engine._output_processor.add_request(
+            MagicMock(
+                request_id="req-1-abc",
+                external_req_id="req-1",
+                sampling_params=SamplingParams(output_kind=RequestOutputKind.DELTA),
+                prompt="test",
+                prompt_token_ids=[1, 2],
+            ),
+            RequestOutputCollector(RequestOutputKind.DELTA, "req-1"),
+        )
+
+        async def _test():
+            engine._run_output_handler()
+            await asyncio.sleep(0.1)
+            assert engine._output_handler is not None
+            assert mock_client.get_output_async.called
+
+        _run(_test())
+
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_output_handler_handles_engine_dead_error(self, mock_make: MagicMock) -> None:
+        """When EngineDeadError is raised, _errored is set and error propagated."""
+        mock_client = AsyncMock()
+        mock_make.return_value = mock_client
+
+        engine = AsyncLLMEngine(_make_config())
+        mock_client.get_output_async = AsyncMock(side_effect=EngineDeadError())
+
+        engine._output_processor.add_request(
+            MagicMock(
+                request_id="req-1",
+                external_req_id="req-1",
+                sampling_params=SamplingParams(output_kind=RequestOutputKind.DELTA),
+                prompt="test",
+                prompt_token_ids=[1, 2],
+            ),
+            RequestOutputCollector(RequestOutputKind.DELTA, "req-1"),
+        )
+
+        async def _test():
+            engine._run_output_handler()
+            await asyncio.sleep(0.1)
+            assert engine._errored is True
+
+        _run(_test())
+
+
+# ── shutdown ─────────────────────────────────────────────────────────
+
+
+class TestShutdown:
+    @patch("vkwr.engine.core_client.EngineCoreClient.make_client")
+    def test_shutdown_cancels_output_handler(self, mock_make: MagicMock) -> None:
+        mock_client = AsyncMock()
+        mock_client.shutdown = MagicMock()
+        mock_make.return_value = mock_client
+
+        engine = AsyncLLMEngine(_make_config())
+
+        async def _test():
+            async def _never_ending():
+                while True:
+                    await asyncio.sleep(1)
+
+            engine._output_handler = asyncio.create_task(_never_ending())
+            assert engine._output_handler is not None
+            await engine.shutdown()
+            assert engine._output_handler is None
+            mock_client.shutdown.assert_called_once()
+
+        _run(_test())
+
+
+# ── OutputProcessor.abort_requests ───────────────────────────────────
+
+
+class TestOutputProcessorAbort:
+    def test_abort_requests_produces_finished_output(self):
+        """abort_requests produces FINISHED_ABORTED output to collector."""
+        from vkwr.engine.output_processor import OutputProcessor
+        from vkwr.engine.request import VkwrRequest
+
+        model_config = ModelConfig(model="fake", tokenizer=None)
+        proc = OutputProcessor(model_config)
+
+        req = VkwrRequest(
+            request_id="req-1",
+            prompt="test",
+            prompt_token_ids=[1, 2],
+            sampling_params=SamplingParams(output_kind=RequestOutputKind.DELTA),
+        )
+        collector = RequestOutputCollector(RequestOutputKind.DELTA, "req-1")
+        proc.add_request(req, collector)
+
+        internal_ids = proc.abort_requests(["req-1"])
+        assert internal_ids == ["req-1"]
+        assert "req-1" not in proc._requests
+
+        out = collector.get_nowait()
+        assert out is not None
+        assert out.finished is True
+        assert out.finish_reason == "abort"
+
+    def test_abort_requests_no_collector(self):
+        """abort_requests works when there is no collector queue."""
+        from vkwr.engine.output_processor import OutputProcessor
+        from vkwr.engine.request import VkwrRequest
+
+        model_config = ModelConfig(model="fake", tokenizer=None)
+        proc = OutputProcessor(model_config)
+
+        req = VkwrRequest(
+            request_id="req-1",
+            prompt="test",
+            prompt_token_ids=[1, 2],
+            sampling_params=SamplingParams(),
+        )
+        proc.add_request(req, None)
+
+        internal_ids = proc.abort_requests(["req-1"])
+        assert internal_ids == ["req-1"]
+        assert "req-1" not in proc._requests
+
+    def test_abort_requests_nonexistent_id(self):
+        """abort_requests ignores nonexistent request IDs."""
+        from vkwr.engine.output_processor import OutputProcessor
+
+        model_config = ModelConfig(model="fake", tokenizer=None)
+        proc = OutputProcessor(model_config)
+
+        internal_ids = proc.abort_requests(["nonexistent"])
+        assert internal_ids == []
+
+    def test_abort_requests_multiple_ids(self):
+        """abort_requests handles multiple request IDs."""
+        from vkwr.engine.output_processor import OutputProcessor
+        from vkwr.engine.request import VkwrRequest
+
+        model_config = ModelConfig(model="fake", tokenizer=None)
+        proc = OutputProcessor(model_config)
+
+        collectors = {}
+        for i in range(3):
+            req = VkwrRequest(
+                request_id=f"req-{i}",
+                prompt="test",
+                prompt_token_ids=[1, 2],
+                sampling_params=SamplingParams(output_kind=RequestOutputKind.DELTA),
+            )
+            collector = RequestOutputCollector(RequestOutputKind.DELTA, f"req-{i}")
+            collectors[f"req-{i}"] = collector
+            proc.add_request(req, collector)
+
+        internal_ids = proc.abort_requests(["req-0", "req-1"])
+        assert sorted(internal_ids) == ["req-0", "req-1"]
+        assert "req-0" not in proc._requests
+        assert "req-1" not in proc._requests
+        assert "req-2" in proc._requests
+
+        out0 = collectors["req-0"].get_nowait()
+        out1 = collectors["req-1"].get_nowait()
+        assert out0.finished is True
+        assert out1.finished is True
+
+    def test_abort_unblocks_generate(self):
+        """abort_requests output can unblock a waiting generate() consumer."""
+        from vkwr.engine.output_processor import OutputProcessor
+        from vkwr.engine.request import VkwrRequest
+
+        model_config = ModelConfig(model="fake", tokenizer=None)
+        proc = OutputProcessor(model_config)
+
+        req = VkwrRequest(
+            request_id="req-1",
+            prompt="test",
+            prompt_token_ids=[1, 2],
+            sampling_params=SamplingParams(output_kind=RequestOutputKind.DELTA),
+        )
+        collector = RequestOutputCollector(RequestOutputKind.DELTA, "req-1")
+        proc.add_request(req, collector)
+
+        async def _test():
+            get_task = asyncio.create_task(collector.get())
+            await asyncio.sleep(0.01)
+            proc.abort_requests(["req-1"])
+            out = await get_task
+            assert out.finished is True
+            assert out.finish_reason == "abort"
+
+        _run(_test())
 
 
 # ── propagate_error ──────────────────────────────────────────────────

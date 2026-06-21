@@ -50,9 +50,13 @@ class TestSamplingParams:
         with pytest.raises(ValueError, match="top_k"):
             SamplingParams(top_k=-2)
 
-    def test_max_tokens_zero_allowed(self):
-        sp = SamplingParams(max_tokens=0)
-        assert sp.max_tokens == 0
+    def test_max_tokens_min(self):
+        sp = SamplingParams(max_tokens=1)
+        assert sp.max_tokens == 1
+
+    def test_max_tokens_zero_rejected(self):
+        with pytest.raises(ValueError, match="max_tokens"):
+            SamplingParams(max_tokens=0)
 
     def test_max_tokens_negative(self):
         with pytest.raises(ValueError, match="max_tokens"):

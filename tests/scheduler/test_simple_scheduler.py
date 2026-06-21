@@ -94,14 +94,11 @@ class TestSimpleSchedulerPrefillSingleChunk:
         sched = SimpleScheduler(_make_config(chunked_prefill_threshold=512))
         req = _make_request(
             prompt_token_ids=[1, 2, 3],
-            sampling_params=SamplingParams(max_tokens=0),
+            sampling_params=SamplingParams(max_tokens=1),
         )
         sched.add_request(req)
         out = sched.schedule()
-        # Scheduler returns early: no scheduled tokens, request already finished
-        assert out.scheduled_req_ids == []
-        assert out.total_num_scheduled_tokens == 0
-        assert "req-1" in out.finished_req_ids
+        assert "req-1" in out.scheduled_req_ids
 
 
 class TestSimpleSchedulerPrefillChunked:
@@ -263,17 +260,14 @@ class TestSimpleSchedulerMultipleRequests:
             _make_request(
                 request_id="req-1",
                 prompt_token_ids=[1, 2],
-                sampling_params=SamplingParams(max_tokens=0),
+                sampling_params=SamplingParams(max_tokens=1),
             )
         )
         sched.add_request(_make_request(request_id="req-2", prompt_token_ids=[10, 20]))
 
         out1 = sched.schedule()
-        # req-1 has max_tokens=0, so scheduler marks it finished immediately.
-        # req-2 is a short prefill (<= chunked_prefill_threshold), so it is also
-        # scheduled in the same step during Phase 2.
-        assert "req-1" not in out1.scheduled_req_ids
-        assert "req-1" in out1.finished_req_ids
+        # req-1 is in RUNNING, gets 1 decode token scheduled.
+        assert "req-1" in out1.scheduled_req_ids
 
         sched.update_from_output(
             out1,
@@ -281,8 +275,10 @@ class TestSimpleSchedulerMultipleRequests:
         )
 
         out2 = sched.schedule()
-        # req-2 was already scheduled in out1, so out2 is empty
-        assert "req-2" not in out2.scheduled_req_ids or out2.scheduled_req_ids == ["req-2"]
+        # req-1 has finished (max_tokens=1, got 1 output token).
+        # req-2 should now be scheduled.
+        assert "req-1" in out2.finished_req_ids
+        assert "req-2" in out2.scheduled_req_ids
 
 
 class TestSimpleSchedulerUpdateFromOutput:

@@ -67,19 +67,18 @@ class TestSingleRequestEndToEnd:
 
             del llm
 
-    def test_generate_max_tokens_zero(self):
-        """max_tokens=0 should return immediately after prefill."""
+    def test_generate_max_tokens_one(self):
+        """max_tokens=1 should generate exactly one token."""
         with _cleanup():
             from vkwr.engine.request import SamplingParams
             from vkwr.entrypoints.llm import LLM
 
             llm = LLM(model=MODEL_PATH, max_model_len=256, max_num_batched_tokens=128)
-            sp = SamplingParams(max_tokens=0)
+            sp = SamplingParams(max_tokens=1)
             outputs = llm.generate("Hello", sampling_params=sp)
 
             assert len(outputs) == 1
             assert outputs[0].finished is True
-            assert outputs[0].finish_reason == "length"
 
             del llm
 

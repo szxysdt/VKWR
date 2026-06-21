@@ -45,6 +45,7 @@ class RWKVTokenizer:
         self._idx2token: list[bytes] | None = None
         self._token2idx: dict[bytes, int] | None = None
         self._root: _TrieNode | None = None
+        self._ensure_loaded()
 
     @property
     def eos_token_id(self) -> int:

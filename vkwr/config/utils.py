@@ -1,3 +1,10 @@
+"""
+Config utilities for VKWR.
+
+Many functions in this module are inspired by or derived from vLLM
+(vllm/config/utils.py), adapted for VKWR's RNN-based inference engine.
+"""
+
 import hashlib
 import json
 from dataclasses import fields, is_dataclass
@@ -11,7 +18,7 @@ ConfigT = TypeVar("ConfigT")
 
 def config(cls=None, *, config_dict=None, **kwargs):
     """Decorator to create a pydantic dataclass with default config.
-    Inspired by vLLM (vllm/config/utils.py). Extra fields are forbidden by default."""
+    Extra fields are forbidden by default."""
     merged_config = ConfigDict(extra="forbid")
     if config_dict is not None:
         merged_config.update(config_dict)
@@ -25,8 +32,7 @@ def config(cls=None, *, config_dict=None, **kwargs):
 
 
 def replace(config_obj, /, **kwargs):
-    """Like dataclasses.replace, but compatible with Pydantic dataclasses.
-    Inspired by vLLM (vllm/config/utils.py)."""
+    """Like dataclasses.replace, but compatible with Pydantic dataclasses."""
     cls = type(config_obj)
     result_dict = config_obj.__dict__.copy()
     result_dict.update(kwargs)
@@ -34,8 +40,7 @@ def replace(config_obj, /, **kwargs):
 
 
 def update_config(config_obj, overrides):
-    """Recursively apply overrides to a config dataclass.
-    Inspired by vLLM (vllm/config/utils.py)."""
+    """Recursively apply overrides to a config dataclass."""
     processed = {}
     for field_name, value in overrides.items():
         current_value = getattr(config_obj, field_name)
@@ -48,8 +53,7 @@ def update_config(config_obj, overrides):
 
 
 def normalize_value(x):
-    """Return a stable, JSON-serializable canonical form for hashing.
-    Reference: vLLM vllm/config/utils.py L230-321, simplified to VKWR's subset."""
+    """Return a stable, JSON-serializable canonical form for hashing."""
     if x is None or isinstance(x, (bool, int, float, str)):
         return x
     if is_dataclass(x):
@@ -66,8 +70,7 @@ def normalize_value(x):
 
 
 def get_hash_factors(config_obj, ignored_factors=None):
-    """Gets factors used for hashing a config dataclass.
-    Inspired by vLLM (vllm/config/utils.py)."""
+    """Gets factors used for hashing a config dataclass."""
     ignored = ignored_factors or set()
     result = {}
     for dc_field in fields(config_obj):
@@ -81,8 +84,8 @@ def get_hash_factors(config_obj, ignored_factors=None):
 def get_default_cudagraph_capture_sizes(max_num_seqs: int, max_num_batched_tokens: int) -> list[int]:
     """Generate CUDA Graph capture sizes for decode.
 
-    Unlike vLLM (Transformer) which can pad a batch to the next captured size,
-    VKWR (RNN) requires exact-match: each seq processes independently with no
+    Unlike vLLM (Transformer Inference Engine) which can pad a batch to the next captured size,
+    VKWR (RNN Engine) requires exact-match: each seq processes independently with no
     cross-seq communication, so an uncaptured batch size falls back to eager.
     This function generates a consecutive 1~max_size list so every possible
     decode batch size has a dedicated CUDA graph."""
@@ -95,6 +98,5 @@ def get_default_cudagraph_capture_sizes(max_num_seqs: int, max_num_batched_token
 
 
 def hash_factors(items):
-    """Return a SHA-256 hex digest of the canonical items structure.
-    Inspired by vLLM (vllm/config/utils.py)."""
+    """Return a SHA-256 hex digest of the canonical items structure."""
     return hashlib.sha256(json.dumps(items, sort_keys=True, default=str).encode()).hexdigest()

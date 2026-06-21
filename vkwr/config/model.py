@@ -16,6 +16,7 @@ class ModelConfig:
     model: str
     tokenizer: str | None = None
     tokenizer_mode: str = "rwkv"
+    skip_tokenizer_init: bool = False
     trust_remote_code: bool = False
     dtype: str = "float16"
     load_format: str = "auto"
@@ -100,7 +101,7 @@ class RWKV7InferenceConfig:
 
     dtype: torch.dtype = torch.float16
     wkv_mode: str = "fp16"  # "fp16" | "fp32io16"
-    emb_device: str = "cpu"  # "cpu" | "gpu"
+    emb_device: str = "gpu"  # "cpu" | "gpu"
     rkv_mode: str = "off"  # "auto" | "on" | "off"
     cmix_sparse: str = "no-fc"  # "auto" | "no-fc" | "off"
     lowrank_weight: str = "both"  # "orig" | "transpose" | "both"

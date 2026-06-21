@@ -34,6 +34,7 @@ class SimpleScheduler(SchedulerInterface):
         self.skipped_waiting = create_request_queue(policy)
 
         self.running: list[VkwrRequest] = []
+        self._running_map: dict[str, VkwrRequest] = {}
 
         self.running_output_tokens: dict[str, list[int]] = {}
 
@@ -44,24 +45,67 @@ class SimpleScheduler(SchedulerInterface):
     def has_requests(self) -> bool:
         return bool(self.waiting) or bool(self.skipped_waiting) or bool(self.running)
 
-    def finish_requests(self, request_ids: set[str]) -> None:
-        """Force-terminate requests. Must check running first, then waiting/skipped."""
-        for req_id in request_ids:
-            req = next((r for r in self.running if r.request_id == req_id), None)
-            if req:
-                req.status = RequestStatus.FINISHED_ABORTED
-                self.running.remove(req)
-                self.running_output_tokens.pop(req_id, None)
-                if self.slot_manager:
-                    self.slot_manager.free(req_id)
-                continue
+    def get_num_unfinished_requests(self) -> int:
+        """Return number of unfinished requests (waiting + running)."""
+        return len(self.running) + len(self.waiting) + len(self.skipped_waiting)
 
-            for queue in (self.waiting, self.skipped_waiting):
-                req = next((r for r in queue if r.request_id == req_id), None)
+    def finish_requests(
+        self,
+        request_ids: set[str] | None,
+        status: RequestStatus = RequestStatus.FINISHED_ABORTED,
+    ) -> list[str]:
+        """Force-terminate requests.
+
+        When request_ids is None, finish ALL unfinished requests with the
+        given status. Returns list of finished request IDs.
+
+        When request_ids is a set, finish only those requests with
+        FINISHED_ABORTED status (legacy path).
+        """
+        if request_ids is not None:
+            finished_ids: list[str] = []
+            for req_id in request_ids:
+                req = self._running_map.get(req_id)
                 if req:
                     req.status = RequestStatus.FINISHED_ABORTED
-                    queue.remove_request(req)
-                    break
+                    self.running.remove(req)
+                    self._running_map.pop(req_id, None)
+                    self.running_output_tokens.pop(req_id, None)
+                    if self.slot_manager:
+                        self.slot_manager.free(req_id)
+                    finished_ids.append(req_id)
+                    continue
+
+                for q in (self.waiting, self.skipped_waiting):
+                    req = next((r for r in q if r.request_id == req_id), None)
+                    if req:
+                        req.status = RequestStatus.FINISHED_ABORTED
+                        q.remove_request(req)
+                        finished_ids.append(req_id)
+                        break
+            return finished_ids
+
+        finished_ids = []
+        while self.running:
+            req = self.running.pop()
+            req.status = status
+            self._running_map.pop(req.request_id, None)
+            self.running_output_tokens.pop(req.request_id, None)
+            if self.slot_manager:
+                self.slot_manager.free(req.request_id)
+            finished_ids.append(req.request_id)
+
+        while self.waiting:
+            req = self.waiting.pop_request()
+            req.status = status
+            finished_ids.append(req.request_id)
+
+        while self.skipped_waiting:
+            req = self.skipped_waiting.pop_request()
+            req.status = status
+            finished_ids.append(req.request_id)
+
+        return finished_ids
 
     def schedule(self) -> SchedulerOutput:
         """Two-phase scheduling: Phase 1 schedules RUNNING, Phase 2 schedules WAITING."""
@@ -110,10 +154,6 @@ class SimpleScheduler(SchedulerInterface):
                 continue
 
             is_last_prefill = not is_decode and req.num_computed_tokens + num_new >= len(req.prompt_token_ids)
-
-            if is_last_prefill and (req.sampling_params.max_tokens is not None and req.sampling_params.max_tokens == 0):
-                finished_req_ids.add(rid)
-                continue
 
             if is_last_prefill and max_model_len is not None:
                 if len(req.prompt_token_ids) + 1 >= max_model_len:
@@ -226,22 +266,13 @@ class SimpleScheduler(SchedulerInterface):
                     step_skipped_waiting.prepend_request(req)
                     continue
 
-            if is_last_prefill and (req.sampling_params.max_tokens is not None and req.sampling_params.max_tokens == 0):
-                req.status = RequestStatus.RUNNING
-                if self.slot_manager:
-                    self.slot_manager.allocate(rid)
-                self.running_output_tokens[rid] = []
-                self.running.append(req)
-                req.num_computed_tokens = len(req.prompt_token_ids)
-                finished_req_ids.add(rid)
-                continue
-
             req.status = RequestStatus.RUNNING
             if self.slot_manager:
                 self.slot_manager.allocate(rid)
 
             self.running_output_tokens[rid] = []
             self.running.append(req)
+            self._running_map[rid] = req
 
             if not is_decode and not is_last_prefill:
                 partial_prefills += 1
@@ -276,9 +307,8 @@ class SimpleScheduler(SchedulerInterface):
         # ── Advance num_computed_tokens ───────────────────────────
         for req_id in scheduled_req_ids:
             n = num_scheduled_tokens[req_id]
-            req = next((r for r in self.running if r.request_id == req_id), None)
-            if req:
-                req.num_computed_tokens += n
+            if req_id in self._running_map:
+                self._running_map[req_id].num_computed_tokens += n
 
         total_num_scheduled_tokens = sum(num_scheduled_tokens.values())
 
@@ -314,7 +344,7 @@ class SimpleScheduler(SchedulerInterface):
             self.running_output_tokens[req_id].extend(tokens)
 
             if req_id not in scheduler_output.finished_req_ids:
-                req = next((r for r in self.running if r.request_id == req_id), None)
+                req = self._running_map.get(req_id)
                 if req:
                     req.num_output_tokens = len(self.running_output_tokens[req_id])
                     eos_id = req.sampling_params.eos_token_id
@@ -322,16 +352,17 @@ class SimpleScheduler(SchedulerInterface):
                         scheduler_output.finished_req_ids.add(req_id)
 
             if req_id not in scheduler_output.finished_req_ids:
-                req = next((r for r in self.running if r.request_id == req_id), None)
+                req = self._running_map.get(req_id)
                 if req and req.sampling_params.stop_token_ids:
                     stop_ids = set(req.sampling_params.stop_token_ids)
                     if any(tid in stop_ids for tid in tokens):
                         scheduler_output.finished_req_ids.add(req_id)
 
         for req_id in scheduler_output.finished_req_ids:
-            req = next((r for r in self.running if r.request_id == req_id), None)
+            req = self._running_map.get(req_id)
             if req:
                 req.status = RequestStatus.FINISHED_STOPPED
+            self._running_map.pop(req_id, None)
             completed_tokens = self.running_output_tokens.pop(req_id, [])
             self.running = [r for r in self.running if r.request_id != req_id]
             if self.slot_manager:

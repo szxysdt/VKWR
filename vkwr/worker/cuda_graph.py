@@ -1,7 +1,8 @@
-"""CUDA Graph capture and replay for RWKV7 inference.
+"""Inspired by vLLM and Albatross.
+
+CUDA Graph capture and replay for RWKV7 inference.
 
 Manages varlen-aware CUDA Graph entries keyed by tuple[int] (seq_lens).
-Aligns with vLLM CUDAGraphWrapper + CudagraphDispatcher but simplified to
 FULL mode only, no padding, no sampling-in-graph.
 """
 
@@ -24,7 +25,6 @@ class CUDAGraphManager:
     Each graph is identified by a varlen-aware key (tuple[int] of seq_lens).
     First encounter captures, subsequent calls replay.
 
-    Aligns with vLLM ModelCudaGraphManager + CUDAGraphWrapper but simplified:
     - FULL mode only
     - No padding (exact match, key = tuple(seq_lens))
     - No sampling in graph

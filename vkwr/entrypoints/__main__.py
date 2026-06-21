@@ -26,6 +26,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--model", required=True, help="Model path (.pth file)")
     parser.add_argument("--tokenizer", default=None, help="Tokenizer path (defaults to model directory)")
     parser.add_argument("--tokenizer-mode", default="rwkv", help="Tokenizer mode: rwkv | auto")
+    parser.add_argument("--skip-tokenizer-init", action="store_true", help="Skip tokenizer initialization")
     parser.add_argument("--dtype", default="float16", help="Compute dtype (default float16)")
     parser.add_argument("--load-format", default="auto", help="Model load format (default auto)")
     parser.add_argument("--max-model-len", type=int, default=None, help="Maximum sequence length")
@@ -49,6 +50,9 @@ def _build_parser() -> argparse.ArgumentParser:
     # Generation defaults (applied when API request omits max_tokens)
     parser.add_argument("--max-tokens", type=int, default=None, help="Maximum tokens to generate (global default, used when API request omits it)")
 
+    # Executor arguments
+    parser.add_argument("--disable-multiprocessing", action="store_true", help="Disable multiprocessing executor backend")
+
     return parser
 
 
@@ -65,6 +69,7 @@ def main() -> None:
         model=args.model,
         tokenizer=args.tokenizer,
         tokenizer_mode=args.tokenizer_mode,
+        skip_tokenizer_init=args.skip_tokenizer_init,
         dtype=args.dtype,
         load_format=args.load_format,
         max_model_len=args.max_model_len,
@@ -75,6 +80,7 @@ def main() -> None:
         enforce_eager=args.enforce_eager,
         cudagraph_mode=args.cudagraph_mode,
         default_max_tokens=args.max_tokens,
+        enable_multiprocessing=not args.disable_multiprocessing,
     )
 
     _run_server(args, engine_args)

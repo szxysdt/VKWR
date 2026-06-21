@@ -24,7 +24,7 @@ class SchedulerConfig:
     batch_queue_size: int = 2
 
     def __post_init__(self, max_model_len: int | None) -> None:
-        if max_model_len and self.max_num_batched_tokens < max_model_len:
+        if max_model_len and self.max_num_batched_tokens < max_model_len and not self.enable_chunked_prefill:
             logger.warning(
                 "max_num_batched_tokens (%d) smaller than max_model_len (%d). Consider increasing max_num_batched_tokens or decreasing max_model_len.",
                 self.max_num_batched_tokens,

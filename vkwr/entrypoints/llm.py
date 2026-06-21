@@ -4,7 +4,6 @@ import logging
 from typing import TYPE_CHECKING
 
 from vkwr.engine.request import SamplingParams
-from vkwr.utils import generate_request_id
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -64,6 +63,15 @@ class LLM:
         if sampling_params is None:
             sampling_params = SamplingParams()
 
+        # Non-streaming mode: use FINAL_ONLY so OutputProcessor only emits
+        # the final completed output per request.
+        if not streaming:
+            import msgspec
+
+            from vkwr.engine.request import RequestOutputKind
+
+            sampling_params = msgspec.structs.replace(sampling_params, output_kind=RequestOutputKind.FINAL_ONLY)
+
         # Normalize prompts to a list
         prompts_list = self._normalize_prompts(prompts)
         if len(prompts_list) == 0:
@@ -71,7 +79,7 @@ class LLM:
 
         # Register all requests
         for i, prompt in enumerate(prompts_list):
-            req_id = generate_request_id(f"req-{i}")
+            req_id = f"req-{i}"
             engine.add_request(req_id, prompt, sampling_params)
 
         if streaming:
@@ -156,3 +164,11 @@ class LLM:
         """Check whether there are unfinished requests."""
         self._lazy_init()
         return self.llm_engine.has_unfinished_requests()
+
+    def close(self) -> None:
+        """Shutdown the engine and release GPU memory."""
+        if self.llm_engine is not None:
+            self.llm_engine.shutdown()
+            self.llm_engine = None
+
+

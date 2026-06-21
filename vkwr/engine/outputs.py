@@ -1,7 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+import time
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import msgspec
+
+from vkwr.engine.core_request import UtilityOutput
 
 if TYPE_CHECKING:
     import torch
@@ -54,7 +59,7 @@ class RequestOutput:
         self.stats = stats
 
     def add(self, next_output: RequestOutput, aggregate: bool) -> None:
-        """Merge subsequent RequestOutput into this one (vLLM-aligned).
+        """Merge subsequent RequestOutput into this one.
 
         Args:
             next_output: The newer RequestOutput to merge in.
@@ -96,8 +101,7 @@ STREAM_FINISHED = RequestOutput(
 )
 
 
-@dataclass
-class EngineCoreOutput:
+class EngineCoreOutput(msgspec.Struct, array_like=True, omit_defaults=True, gc=False):
     request_id: str
     new_token_ids: list[int]
     new_logprobs: list[dict[int, float]] | None = None
@@ -105,11 +109,15 @@ class EngineCoreOutput:
     stop_reason: int | str | None = None
 
 
-@dataclass
-class EngineCoreOutputs:
-    outputs: list[EngineCoreOutput] = field(default_factory=list)
+class EngineCoreOutputs(msgspec.Struct, array_like=True, omit_defaults=True, gc=False):
+    outputs: list[EngineCoreOutput] = []
     scheduler_stats: dict | None = None
     timestamp: float = 0.0
+    utility_output: UtilityOutput | None = None
+
+    def __post_init__(self):
+        if self.timestamp == 0.0:
+            self.timestamp = time.monotonic()
 
 
 @dataclass

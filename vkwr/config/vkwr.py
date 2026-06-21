@@ -13,10 +13,14 @@ class EngineArgs:
     model: str
     tokenizer: str | None = None
     tokenizer_mode: str = "rwkv"
+    skip_tokenizer_init: bool = False
     trust_remote_code: bool = False
     dtype: str = "float16"
     max_model_len: int | None = None
-    download_dir: str | None = None
+    # TODO(download_dir): Currently not passed to ModelConfig in create_engine_config().
+    # Either wire it through or remove once the download_dir flow is decided.
+    # See: dev_docs/code_reviews/v001-20260621-engine-cli-env-audit.md P0-2.1
+    # download_dir: str | None = None
     load_format: str = "auto"
     seed: int = 42
     max_num_batched_tokens: int | None = None
@@ -29,12 +33,14 @@ class EngineArgs:
     default_max_tokens: int | None = None
     enable_async_scheduling: bool = True
     batch_queue_size: int = 2
+    enable_multiprocessing: bool = True
 
     def create_engine_config(self) -> VkwrConfig:
         mc_kwargs: dict = {
             "model": self.model,
             "tokenizer": self.tokenizer,
             "tokenizer_mode": self.tokenizer_mode,
+            "skip_tokenizer_init": self.skip_tokenizer_init,
             "trust_remote_code": self.trust_remote_code,
             "dtype": self.dtype,
             "load_format": self.load_format,

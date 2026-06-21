@@ -1,3 +1,5 @@
+"""Inspired by vLLM."""
+
 from __future__ import annotations
 
 import asyncio
@@ -99,7 +101,7 @@ class _RequestState:
 
 
 class RequestOutputCollector:
-    """Single-slot async queue per request (vLLM-aligned).
+    """Single-slot async queue per request.
 
     If the producer (engine loop) pushes faster than the consumer (stream reader),
     outputs are merged via RequestOutput.add() rather than buffered.
@@ -159,19 +161,12 @@ class OutputProcessor:
     - Final RequestOutput.request_id is the external (user-provided) ID
     """
 
-    def __init__(self, model_config: ModelConfig):
+    def __init__(self, model_config: ModelConfig, tokenizer: RWKVTokenizer | None = None):
         self.model_config = model_config
         self._requests: dict[str, _RequestState] = {}
         self.external_req_ids: dict[str, list[str]] = {}
-        self._tokenizer: RWKVTokenizer | None = None
+        self._tokenizer: RWKVTokenizer | None = tokenizer
         self._finished_ids: list[str] = []
-
-    def _get_tokenizer(self) -> RWKVTokenizer | None:
-        if self._tokenizer is None:
-            from vkwr.engine.tokenizer import get_tokenizer
-
-            self._tokenizer = get_tokenizer(self.model_config.tokenizer)
-        return self._tokenizer
 
     def add_request(
         self,
@@ -257,9 +252,8 @@ class OutputProcessor:
         """Decode token IDs to text."""
         if not token_ids:
             return ""
-        tok = self._get_tokenizer()
-        if tok is not None:
-            return tok.decode(token_ids)
+        if self._tokenizer is not None:
+            return self._tokenizer.decode(token_ids)
         return ""
 
     def get_and_clear_finished_ids(self) -> list[str]:
@@ -285,3 +279,25 @@ class OutputProcessor:
         for _, state in self._requests.items():
             if state.queue is not None:
                 state.queue.put(e)
+
+    def abort_requests(self, request_ids: list[str]) -> list[str]:
+        """Abort request(s). Produce FINISHED_ABORTED output to collector.
+
+        For each request:
+        1. Pop from _requests
+        2. If it has a collector queue, push FINISHED_ABORTED output
+        3. Remove from request tracking
+
+        Returns internal request IDs that were actually aborted.
+        """
+        internal_req_ids: list[str] = []
+        for request_id in request_ids:
+            req_state = self._requests.pop(request_id, None)
+            if req_state is not None:
+                internal_req_ids.append(request_id)
+                if req_state.queue is not None:
+                    req_state.finished = True
+                    req_state.finish_reason = "abort"
+                    abort_output = req_state.make_request_output()
+                    req_state.queue.put(abort_output)
+        return internal_req_ids

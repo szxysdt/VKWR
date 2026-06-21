@@ -92,7 +92,7 @@ class TestEngineCoreOutputs:
         eeo = EngineCoreOutputs()
         assert len(eeo.outputs) == 0
         assert eeo.scheduler_stats is None
-        assert eeo.timestamp == 0.0
+        assert eeo.timestamp > 0
 
     def test_with_outputs(self):
         output = EngineCoreOutput(

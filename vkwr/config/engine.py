@@ -1,4 +1,5 @@
 import hashlib
+import os
 
 from pydantic import Field
 
@@ -9,6 +10,8 @@ from vkwr.config.scheduler import SchedulerConfig
 from vkwr.config.state import StateConfig
 from vkwr.config.utils import config
 from vkwr.config.worker import GPUWorkerConfig
+
+ENGINE_READY_TIMEOUT_S = int(os.environ.get("VKWR_ENGINE_READY_TIMEOUT_S", "300"))
 
 
 @config

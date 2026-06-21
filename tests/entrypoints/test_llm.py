@@ -84,7 +84,7 @@ class TestLLMGenerateSync:
 
         mock_engine.add_request.assert_called_once()
         call_args = mock_engine.add_request.call_args
-        assert call_args[0][0].startswith("req-0-")
+        assert call_args[0][0] == "req-0"
         assert call_args[0][1] == "hello"
 
 

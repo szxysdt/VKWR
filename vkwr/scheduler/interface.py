@@ -8,6 +8,8 @@ if TYPE_CHECKING:
     from vkwr.engine.request import VkwrRequest
     from vkwr.scheduler.output import SchedulerOutput
 
+from vkwr.engine.request import RequestStatus
+
 
 class SchedulerInterface(ABC):
     """Abstract scheduler interface"""
@@ -33,5 +35,17 @@ class SchedulerInterface(ABC):
         """Whether there are unfinished requests"""
 
     @abstractmethod
-    def finish_requests(self, request_ids: set[str]) -> None:
-        """Forcefully terminate specified requests"""
+    def finish_requests(
+        self,
+        request_ids: set[str] | None,
+        status: RequestStatus = RequestStatus.FINISHED_ABORTED,
+    ) -> list[str]:
+        """Forcefully terminate requests.
+
+        When request_ids is None, finish ALL unfinished requests.
+        Returns list of finished request IDs.
+        """
+
+    @abstractmethod
+    def get_num_unfinished_requests(self) -> int:
+        """Return number of unfinished requests."""

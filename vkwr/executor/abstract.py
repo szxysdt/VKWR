@@ -61,3 +61,7 @@ class ExecutorInterface(ABC):
     @abstractmethod
     def compile_or_warm_up_model(self) -> None:
         """Compile or warm up the model"""
+
+    def shutdown(self) -> None:
+        """Shutdown executor and release resources."""
+        pass

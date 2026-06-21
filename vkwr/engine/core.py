@@ -6,6 +6,7 @@ from collections import deque
 from queue import Queue
 from typing import TYPE_CHECKING
 
+from vkwr.engine.core_request import EngineCoreRequest
 from vkwr.executor.abstract import ExecutorInterface
 from vkwr.state.state_slot_manager import StateSlotManager
 
@@ -66,8 +67,29 @@ class EngineCore:
         self._initialized = True
         logger.info("EngineCore initialized successfully.")
 
-    def add_request(self, request: VkwrRequest) -> None:
-        """Add a request to the scheduler."""
+    def preprocess_add_request(self, request: EngineCoreRequest) -> tuple[VkwrRequest, int]:
+        from vkwr.engine.request import VkwrRequest
+
+        sampling_params = request.sampling_params
+        assert sampling_params is not None
+
+        prompt_token_ids = request.prompt_token_ids or []
+        req = VkwrRequest(
+            request_id=request.request_id,
+            prompt="",
+            prompt_token_ids=prompt_token_ids,
+            sampling_params=sampling_params,
+            arrival_time=request.arrival_time,
+            priority=request.priority,
+        )
+        request_wave = request.current_wave
+        return req, request_wave
+
+    def add_request(self, request: VkwrRequest, request_wave: int = 0) -> None:
+        """Add a request to the scheduler.
+
+        request_wave: reserved for V4 DP wave coordination (unused in Phase 5).
+        """
         if not self._initialized:
             raise RuntimeError("EngineCore not initialized. Call initialize() first.")
         self.scheduler.add_request(request)
@@ -140,13 +162,29 @@ class EngineCore:
                 request_ids.extend((ids,) if isinstance(ids, str) else ids)
             self.abort_requests(request_ids)
 
-    def abort_requests(self, request_ids: list[str]) -> None:
-        self.scheduler.finish_requests(set(request_ids))
+    def abort_requests(self, request_ids: list[str]) -> dict[int, EngineCoreOutputs]:
+        from vkwr.engine.outputs import EngineCoreOutput, EngineCoreOutputs
+
+        finished_ids = self.scheduler.finish_requests(set(request_ids))
+        if not finished_ids:
+            return {}
+        outputs = EngineCoreOutputs(
+            outputs=[
+                EngineCoreOutput(
+                    request_id=rid,
+                    new_token_ids=[],
+                    finish_reason="abort",
+                )
+                for rid in finished_ids
+            ],
+            timestamp=time.monotonic(),
+        )
+        return {0: outputs}
 
     def step_with_batch_queue(self) -> tuple[dict[int, EngineCoreOutputs] | None, bool]:
         """Async step: schedule first, then process completed batches.
 
-        Schedule-first ordering aligns with vLLM. Since decode input tokens
+        Schedule-first ordering. Since decode input tokens
         are now read from GPU cache (_last_sampled_token), the scheduler no
         longer depends on running_output_tokens, eliminating the one-step lag.
         """
@@ -229,3 +267,8 @@ class EngineCore:
     def has_unfinished_requests(self) -> bool:
         """Check if there are unfinished requests."""
         return self.scheduler.has_requests()
+
+    def shutdown(self) -> None:
+        """Shutdown engine core and release all resources."""
+        if self.model_executor:
+            self.model_executor.shutdown()

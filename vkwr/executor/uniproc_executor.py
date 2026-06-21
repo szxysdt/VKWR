@@ -46,7 +46,6 @@ class UniprocExecutor(ExecutorInterface):
     def _run_forward(self, scheduler_output: SchedulerOutput) -> ModelRunnerOutput:
         with torch.cuda.stream(self._compute_stream):
             result = self.worker.execute_model(scheduler_output)
-            self._compute_stream.synchronize()
             return result
 
     def sample_tokens(
@@ -67,3 +66,9 @@ class UniprocExecutor(ExecutorInterface):
         if self.worker is None:
             raise RuntimeError("Executor not initialized. Call initialize() first.")
         self.worker.compile_or_warm_up_model()
+
+    def shutdown(self) -> None:
+        if self.worker is not None:
+            self.worker.shutdown()
+            self.worker = None
+        self._executor.shutdown(wait=False)

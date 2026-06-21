@@ -480,7 +480,7 @@ class TestRWKV7InferenceConfig:
         c = RWKV7InferenceConfig()
         assert c.dtype == torch.float16
         assert c.wkv_mode == "fp16"
-        assert c.emb_device == "cpu"
+        assert c.emb_device == "gpu"
         assert c.rkv_mode == "off"
         assert c.cmix_sparse == "no-fc"
         assert c.lowrank_weight == "both"

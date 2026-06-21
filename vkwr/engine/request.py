@@ -2,6 +2,8 @@ import enum
 import time
 from dataclasses import dataclass
 
+import msgspec
+
 
 class RequestStatus(enum.IntEnum):
     WAITING = 0
@@ -23,8 +25,7 @@ class RequestOutputKind(enum.IntEnum):
     FINAL_ONLY = 2
 
 
-@dataclass
-class SamplingParams:
+class SamplingParams(msgspec.Struct, dict=True, omit_defaults=True):
     """Sampling parameters, based on vLLM SamplingParams + Albatross app.py:39-56"""
 
     n: int = 1
@@ -36,13 +37,13 @@ class SamplingParams:
     frequency_penalty: float = 0.0
     penalty_decay: float = 1.0
     max_tokens: int | None = None
-    stop: list[str] | None = None
+    stop: str | list[str] | None = None
     stop_token_ids: list[int] | None = None
-    _eos_token_id: int | None = None
+    eos_token_id: int | None = None
     ignore_eos: bool = False
     seed: int | None = None
     use_beam_search: bool = False
-    output_kind: "RequestOutputKind" = RequestOutputKind.CUMULATIVE
+    output_kind: int = 0
 
     def __post_init__(self):
         if self.n < 1:
@@ -51,22 +52,30 @@ class SamplingParams:
             raise ValueError("n > 1 (parallel sampling) is not supported")
         if self.temperature < 0:
             raise ValueError("temperature must be >= 0")
-        if not (0 <= self.top_p <= 1):
-            raise ValueError("top_p must be in [0, 1]")
+        if not -2.0 <= self.presence_penalty <= 2.0:
+            raise ValueError("presence_penalty must be in [-2, 2]")
+        if not -2.0 <= self.frequency_penalty <= 2.0:
+            raise ValueError("frequency_penalty must be in [-2, 2]")
+        if not 0.0 < self.top_p <= 1.0:
+            raise ValueError("top_p must be in (0, 1]")
         if not (0 <= self.min_p <= 1):
             raise ValueError("min_p must be in [0, 1]")
         if self.top_k < -1:
             raise ValueError("top_k must be >= -1")
-        if self.max_tokens is not None and self.max_tokens < 0:
-            raise ValueError("max_tokens must be >= 0")
-
-    @property
-    def eos_token_id(self) -> int | None:
-        return self._eos_token_id
-
-    @eos_token_id.setter
-    def eos_token_id(self, value: int | None):
-        self._eos_token_id = value
+        if self.max_tokens is not None and self.max_tokens < 1:
+            raise ValueError("max_tokens must be at least 1")
+        if self.seed == -1:
+            self.seed = None
+        if self.stop is None:
+            self.stop = []
+        elif isinstance(self.stop, str):
+            self.stop = [self.stop]
+        if self.stop and any(not s for s in self.stop):
+            raise ValueError("stop cannot contain an empty string")
+        if self.temperature < 1e-5:
+            self.top_p = 1.0
+            self.top_k = 0
+            self.min_p = 0.0
 
 
 @dataclass
