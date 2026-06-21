@@ -24,8 +24,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # Model arguments
     parser.add_argument("--model", required=True, help="Model path (.pth file)")
-    parser.add_argument("--tokenizer", default=None, help="Tokenizer path (defaults to model directory)")
-    parser.add_argument("--tokenizer-mode", default="rwkv", help="Tokenizer mode: rwkv | auto")
+    parser.add_argument("--tokenizer", default=None, help="Tokenizer path or directory (defaults to model's parent directory)")
     parser.add_argument("--skip-tokenizer-init", action="store_true", help="Skip tokenizer initialization")
     parser.add_argument("--dtype", default="float16", help="Compute dtype (default float16)")
     parser.add_argument("--load-format", default="auto", help="Model load format (default auto)")
@@ -33,7 +32,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
 
     # Scheduler arguments
-    parser.add_argument("--max-num-batched-tokens", type=int, default=None, help="Max global tokens per step")
+    parser.add_argument("--max-num-batched-tokens", type=int, default=2048, help="Max tokens per scheduling step")
     parser.add_argument("--max-num-seqs", type=int, default=64, help="Maximum concurrent requests")
 
     # Worker arguments
@@ -68,7 +67,6 @@ def main() -> None:
     engine_args = EngineArgs(
         model=args.model,
         tokenizer=args.tokenizer,
-        tokenizer_mode=args.tokenizer_mode,
         skip_tokenizer_init=args.skip_tokenizer_init,
         dtype=args.dtype,
         load_format=args.load_format,

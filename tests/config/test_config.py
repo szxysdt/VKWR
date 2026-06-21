@@ -189,7 +189,6 @@ class TestModelConfig:
     def test_defaults(self):
         c = ModelConfig(model="test")
         assert c.tokenizer is None
-        assert c.tokenizer_mode == "rwkv"
         assert c.trust_remote_code is False
         assert c.dtype == "float16"
         assert c.load_format == "auto"

@@ -15,7 +15,6 @@ class ModelConfig:
 
     model: str
     tokenizer: str | None = None
-    tokenizer_mode: str = "rwkv"
     skip_tokenizer_init: bool = False
     trust_remote_code: bool = False
     dtype: str = "float16"

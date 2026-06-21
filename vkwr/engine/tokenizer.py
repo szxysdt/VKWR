@@ -7,10 +7,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_VOCAB_PATHS = [
-    Path(__file__).parents[2] / "third_party" / "rwkv_lightning" / "infer" / "rwkv_batch" / "rwkv_vocab_v20230424.txt",
-    Path("third_party") / "rwkv_lightning" / "infer" / "rwkv_batch" / "rwkv_vocab_v20230424.txt",
-]
+VOCAB_FILE = "rwkv_vocab_v20230424.txt"
+VOCAB_DOWNLOAD_URL = "https://github.com/BlinkDL/RWKV-LM/blob/main/RWKV-v7/rwkv_vocab_v20230424.txt"
 
 
 class _TrieNode:
@@ -56,15 +54,19 @@ class RWKVTokenizer:
             return
         path = self._find_vocab()
         if path is None:
-            raise FileNotFoundError("RWKV vocab file not found. Set ModelConfig.tokenizer to the path of rwkv_vocab_v20230424.txt.")
+            raise FileNotFoundError(
+                f"RWKV vocab file '{VOCAB_FILE}' not found.\n  Please download it and place it next to your model file:\n  {VOCAB_DOWNLOAD_URL}"
+            )
         self._load_vocab(path)
 
     def _find_vocab(self) -> Path | None:
-        if self._vocab_path is not None and self._vocab_path.exists():
-            return self._vocab_path
-        for p in _DEFAULT_VOCAB_PATHS:
-            if p.exists():
-                return p
+        if self._vocab_path is not None:
+            if self._vocab_path.is_file():
+                return self._vocab_path
+            if self._vocab_path.is_dir():
+                candidate = self._vocab_path / VOCAB_FILE
+                if candidate.exists():
+                    return candidate
         return None
 
     def _load_vocab(self, path: Path) -> None:

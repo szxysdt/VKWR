@@ -10,7 +10,7 @@ if(NOT DEFINED VKWR_TARGET_DEVICE)
 endif()
 
 if(NOT DEFINED VKWR_CUDA_ARCH)
-    set(VKWR_CUDA_ARCH "89" CACHE STRING "CUDA architecture (e.g., 80, 86, 89, 90, 120)")
+    message(FATAL_ERROR "VKWR_CUDA_ARCH is not set. This should be passed by setup.py during build.")
 endif()
 
 # Find Python first (Torch's cmake also queries Python internally).

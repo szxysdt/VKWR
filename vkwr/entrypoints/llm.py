@@ -170,5 +170,3 @@ class LLM:
         if self.llm_engine is not None:
             self.llm_engine.shutdown()
             self.llm_engine = None
-
-

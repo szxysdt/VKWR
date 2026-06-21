@@ -111,7 +111,21 @@ class CMakeBuild(build_ext):
         build_temp.mkdir(exist_ok=True)
 
         device = os.environ.get("VKWR_TARGET_DEVICE", "cuda")
-        cuda_arch = os.environ.get("VKWR_CUDA_ARCH", "89")
+
+        # Auto-detect CUDA architecture from the local GPU, similar to vLLM's approach.
+        # If VKWR_CUDA_ARCH is set, use it explicitly; otherwise detect from GPU.
+        cuda_arch = os.environ.get("VKWR_CUDA_ARCH")
+        if cuda_arch is None and device == "cuda":
+            try:
+                major, minor = torch.cuda.get_device_capability()
+                cuda_arch = f"{major}{minor}"
+                print(f"[vkwr] Auto-detected CUDA architecture: {cuda_arch}")
+            except Exception as e:
+                raise RuntimeError(
+                    f"Cannot auto-detect CUDA architecture. "
+                    f"Set VKWR_CUDA_ARCH environment variable to override. "
+                    f"Error: {e}"
+                ) from e
 
         cfg = os.environ.get("CMAKE_BUILD_TYPE") or "Release"
         torch_dir = Path(torch.utils.cmake_prefix_path)

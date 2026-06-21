@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from pathlib import Path
 
 from vkwr.config.compilation import CompilationConfig
 from vkwr.config.engine import VkwrConfig
@@ -12,7 +13,6 @@ from vkwr.config.worker import GPUWorkerConfig
 class EngineArgs:
     model: str
     tokenizer: str | None = None
-    tokenizer_mode: str = "rwkv"
     skip_tokenizer_init: bool = False
     trust_remote_code: bool = False
     dtype: str = "float16"
@@ -23,7 +23,7 @@ class EngineArgs:
     # download_dir: str | None = None
     load_format: str = "auto"
     seed: int = 42
-    max_num_batched_tokens: int | None = None
+    max_num_batched_tokens: int = 2048
     max_num_seqs: int = 64
     gpu_memory_utilization: float = 0.92
     enforce_eager: bool = False
@@ -36,10 +36,13 @@ class EngineArgs:
     enable_multiprocessing: bool = True
 
     def create_engine_config(self) -> VkwrConfig:
+        tokenizer = self.tokenizer
+        if tokenizer is None:
+            tokenizer = str(Path(self.model).parent)
+
         mc_kwargs: dict = {
             "model": self.model,
-            "tokenizer": self.tokenizer,
-            "tokenizer_mode": self.tokenizer_mode,
+            "tokenizer": tokenizer,
             "skip_tokenizer_init": self.skip_tokenizer_init,
             "trust_remote_code": self.trust_remote_code,
             "dtype": self.dtype,
@@ -53,7 +56,7 @@ class EngineArgs:
 
         scheduler_config = SchedulerConfig(
             max_model_len=model_config.max_model_len,
-            max_num_batched_tokens=self.max_num_batched_tokens or 2048,
+            max_num_batched_tokens=self.max_num_batched_tokens,
             max_num_seqs=self.max_num_seqs,
             default_max_tokens=self.default_max_tokens,
             enable_async_scheduling=self.enable_async_scheduling,
