@@ -48,7 +48,7 @@ def _(B, T, C, H, state, r, w, k, v, a, b, y):
 
 @torch.library.register_fake("vkwr_v1_wkv::advance_i32")
 def _(x, amount):
-    return []
+    return None
 
 
 # ===== fp16 wrappers (elapsed_t managed externally by caller) =====

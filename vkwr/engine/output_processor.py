@@ -200,7 +200,8 @@ class OutputProcessor:
             req_state = self._requests.get(core_output.request_id)
             if req_state is None:
                 logger.warning(
-                    "Unknown request_id %s in engine output, skipping",
+                    "Unknown request_id %s in engine output (already removed from "
+                    "output processor — likely a stale pending batch), skipping",
                     core_output.request_id,
                 )
                 continue
