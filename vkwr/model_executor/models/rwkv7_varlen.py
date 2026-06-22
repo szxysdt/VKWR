@@ -216,6 +216,7 @@ class RWKV7:
         is_uniform = total_tokens == B * max_t
         v_first = x
         xx = layer_norm_f16(x.contiguous(), z["blocks.0.ln1.weight"], z["blocks.0.ln1.bias"])
+        pre_mix = None
 
         for layer in range(self.config.L):
             param_prefix = f"blocks.{layer}."
@@ -232,10 +233,12 @@ class RWKV7:
                 max_t,
                 B,
                 is_uniform,
+                pre_mix,
             )
+            pre_mix = None
 
             if layer + 1 < self.config.L:
-                x, xx = self.add_ln(x, xx, z[f"blocks.{layer + 1}.ln1.weight"], z[f"blocks.{layer + 1}.ln1.bias"])
+                x, xx, pre_mix = self._compute_next_layer_pre_mix(x, xx, state, layer, is_uniform, max_t, B)
             elif not all_logits:
                 return self._finalize_last_layer(x, xx, state, query_start_loc, max_t, is_uniform, B)
             else:
@@ -259,6 +262,7 @@ class RWKV7:
         max_t: int,
         B: int,
         is_uniform: bool,
+        pre_mix=None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         z = self.z
         p = param_prefix
@@ -278,6 +282,7 @@ class RWKV7:
             max_t,
             B,
             is_uniform,
+            pre_mix=pre_mix,
         )
 
         # Channel mix: add_ln + cmix (split path for varlen)
@@ -295,6 +300,44 @@ class RWKV7:
         )
 
         return x, xx, v_first
+
+    def _compute_next_layer_pre_mix(
+        self,
+        x: torch.Tensor,
+        xx: torch.Tensor,
+        state: list[torch.Tensor],
+        layer: int,
+        is_uniform: bool,
+        max_t: int,
+        B: int,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        z = self.z
+        p_next = f"blocks.{layer + 1}."
+        if self.inference_config.ln1_tmix_fuse and is_uniform and max_t == 1 and B == 1:
+            from vkwr._ops.v1.v1_norm_ops import add_layer_norm_tmix_mix6_f16
+
+            x3d = x.view(1, 1, self.config.C).contiguous()
+            xx3d = xx.view(1, 1, self.config.C).contiguous()
+            outs = add_layer_norm_tmix_mix6_f16(
+                x3d,
+                xx3d,
+                state[0][layer + 1][0],
+                z[p_next + "ln1.weight"],
+                z[p_next + "ln1.bias"],
+                z[p_next + "att.x_r"],
+                z[p_next + "att.x_w"],
+                z[p_next + "att.x_k"],
+                z[p_next + "att.x_v"],
+                z[p_next + "att.x_a"],
+                z[p_next + "att.x_g"],
+            )
+            x = outs[0].view(B, self.config.C)
+            pre_mix = outs[1:]
+            xx = x
+        else:
+            x, xx = self.add_ln(x, xx, z[p_next + "ln1.weight"], z[p_next + "ln1.bias"])
+            pre_mix = None
+        return x, xx, pre_mix
 
     def _finalize_last_layer(
         self,

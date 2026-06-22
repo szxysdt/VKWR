@@ -217,6 +217,13 @@ class GPUModelRunner:
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
+        # Guard: scheduled_req_ids may have been emptied by cross-batch
+        # cleanup (EngineCore._purge_finished_from_sched).
+        if not scheduler_output.scheduled_req_ids:
+            from vkwr.engine.outputs import ModelRunnerOutput
+
+            return ModelRunnerOutput(sampled_token_ids={})
+
         # Task 5: Apply batch reorder GPU swap
         if scheduler_output.sorted_indices is not None:
             self._apply_batch_reorder(
@@ -256,6 +263,7 @@ class GPUModelRunner:
             logits = self.model.forward(tokens, state, query_start_loc, max_t)
 
         self._scatter_state(state, indices)
+        torch.cuda.synchronize()
 
         model_output = ModelRunnerOutput(
             sampled_token_ids={},
@@ -309,6 +317,11 @@ class GPUModelRunner:
             self._state_shift[:, :, slot].copy_(self._decode_state_shift[:, :, i])
             self._state_wkv[:, slot].copy_(self._decode_state_wkv[:, i])
             self._state_elapsed[slot].copy_(self._decode_state_elapsed[i])
+
+        # Synchronise so that scatter and logits are fully visible before
+        # sample_tokens writes _last_sampled_token and the next step reads
+        # state / token caches.
+        torch.cuda.synchronize()
 
         # 4b. Optional checkpoint
         self._maybe_checkpoint(scheduler_output, slot_indices)
@@ -372,6 +385,11 @@ class GPUModelRunner:
             run_data = scheduler_output.request_data[req_id]
             sampling_params_list.append(run_data.sampling_params)
             req_ids.append(req_id)
+
+        if not sampling_params_list:
+            from vkwr.engine.outputs import ModelRunnerOutput
+
+            return ModelRunnerOutput(sampled_token_ids={})
 
         sampled, logprobs = self.sampler(logits.float(), sampling_params_list)
 
@@ -563,16 +581,20 @@ class GPUModelRunner:
             self._decode_state_elapsed[:B],
         ]
 
-        query_start_loc = torch.tensor(
-            [0] + list(itertools.accumulate(seq_lens)),
-            dtype=torch.int32,
-            device=self.device,
+        self._uniform_query_start_loc[: B + 1].copy_(
+            torch.tensor(
+                [0] + list(itertools.accumulate(seq_lens)),
+                dtype=torch.int32,
+            ),
         )
-        req_id = torch.tensor(
-            [i for i, sl in enumerate(seq_lens) for _ in range(sl)],
-            dtype=torch.int32,
-            device=self.device,
+        self._uniform_req_id[:total_tokens].copy_(
+            torch.tensor(
+                [i for i, sl in enumerate(seq_lens) for _ in range(sl)],
+                dtype=torch.int32,
+            ),
         )
+        query_start_loc = self._uniform_query_start_loc[: B + 1]
+        req_id = self._uniform_req_id[:total_tokens]
         path = model.path_selector.select(B, max_t, total_tokens)
 
         def forward_fn(x, state, path, query_start_loc, req_id, max_t, B):

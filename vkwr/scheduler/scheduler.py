@@ -359,6 +359,9 @@ class SimpleScheduler(SchedulerInterface):
                         scheduler_output.finished_req_ids.add(req_id)
 
         for req_id in scheduler_output.finished_req_ids:
+            # Guard: skip requests already finished by a previous batch.
+            if req_id not in self.running_output_tokens and req_id not in self._running_map:
+                continue
             req = self._running_map.get(req_id)
             if req:
                 req.status = RequestStatus.FINISHED_STOPPED
@@ -391,6 +394,11 @@ class SimpleScheduler(SchedulerInterface):
             if req_id not in engine_outputs:
                 tokens = model_output.sampled_token_ids.get(req_id, [])
                 if not tokens:
+                    continue
+                # Guard: skip requests that were already finished by a
+                # previous batch and removed from running_output_tokens.
+                # Otherwise stale EngineCoreOutputs leak to OutputProcessor.
+                if req_id not in self.running_output_tokens:
                     continue
                 engine_outputs[req_id] = EngineCoreOutputs(
                     outputs=[

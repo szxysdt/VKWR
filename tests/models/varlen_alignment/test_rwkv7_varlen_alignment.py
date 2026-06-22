@@ -244,6 +244,7 @@ def _compare_per_request(out_vl: torch.Tensor, out_v1: torch.Tensor, seq_lens: l
 # can serve as a pytest id via parametrize `ids`.
 ALIGNMENT_CASES: list[tuple[str, list[int]]] = [
     # --- Group 1: decode-only ---
+    ("decode_b1", [1]),
     ("decode_b3", [1, 1, 1]),
     ("decode_b5", [1, 1, 1, 1, 1]),
     ("decode_b8", [1] * 8),

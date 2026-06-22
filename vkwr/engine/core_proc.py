@@ -138,7 +138,17 @@ class EngineCoreProc(EngineCore):
         try:
             while self._handle_shutdown():
                 self._process_input_queue()
-                self._process_engine_step()
+                try:
+                    self._process_engine_step()
+                except Exception:
+                    logger.exception(
+                        "EngineCore step failed — aborting all in-flight "
+                        "requests to avoid hanging clients"
+                    )
+                    aborted = self.scheduler.finish_requests(None, RequestStatus.FINISHED_ABORTED)
+                    if aborted:
+                        self._send_abort_outputs(aborted)
+                    break
         except Exception:
             logger.exception("EngineCore encountered a fatal error")
             self._send_engine_dead()
@@ -187,21 +197,30 @@ class EngineCoreProc(EngineCore):
         return True
 
     def _process_input_queue(self):
-        while not self.scheduler.has_requests() and self.is_running():
-            if self.input_queue.empty():
-                with self.aborts_queue.mutex:
-                    self.aborts_queue.queue.clear()
-            try:
-                req = self.input_queue.get(block=self.process_input_queue_block)
-                self._handle_client_request(*req)
-                if not self.process_input_queue_block:
+        # If there are pending batches in the async queue we must not block
+        # on the input socket, otherwise we would never reach the next
+        # _process_engine_step that drains them.
+        saved_block = self.process_input_queue_block
+        if self.batch_queue and len(self.batch_queue) > 0:
+            self.process_input_queue_block = False
+        try:
+            while not self.scheduler.has_requests() and self.is_running():
+                if self.input_queue.empty():
+                    with self.aborts_queue.mutex:
+                        self.aborts_queue.queue.clear()
+                try:
+                    req = self.input_queue.get(block=self.process_input_queue_block)
+                    self._handle_client_request(*req)
+                    if not self.process_input_queue_block:
+                        break
+                except queue.Empty:
                     break
-            except queue.Empty:
-                break
 
-        while not self.input_queue.empty():
-            req = self.input_queue.get_nowait()
-            self._handle_client_request(*req)
+            while not self.input_queue.empty():
+                req = self.input_queue.get_nowait()
+                self._handle_client_request(*req)
+        finally:
+            self.process_input_queue_block = saved_block
 
     def _handle_client_request(self, request_type: EngineCoreRequestType, payload: Any) -> None:
         if request_type == EngineCoreRequestType.ADD:
