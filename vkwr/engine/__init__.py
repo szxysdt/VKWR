@@ -24,7 +24,7 @@ from vkwr.engine.request import (
     SamplingParams,
     VkwrRequest,
 )
-from vkwr.engine.tokenizer import RWKVTokenizer, get_tokenizer
+from vkwr.tokenizers.rwkv7 import RWKVTokenizer, get_tokenizer
 
 __all__ = [
     "AsyncLLMEngine",

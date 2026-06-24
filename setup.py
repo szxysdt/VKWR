@@ -189,6 +189,8 @@ for name in [
 
 
 setup(
+    name="vkwr",
+    version="0.1.0",
     ext_modules=ext_modules,
     cmdclass={"build_ext": CMakeBuild},
 )

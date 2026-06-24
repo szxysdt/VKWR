@@ -17,7 +17,7 @@ from vkwr.engine.outputs import (
 from vkwr.engine.request import RequestOutputKind, VkwrRequest
 
 if TYPE_CHECKING:
-    from vkwr.engine.tokenizer import RWKVTokenizer
+    from vkwr.tokenizers.rwkv7 import RWKVTokenizer
 
 logger = logging.getLogger(__name__)
 
