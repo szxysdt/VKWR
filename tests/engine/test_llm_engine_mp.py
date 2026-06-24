@@ -104,6 +104,11 @@ class TestLLMEngineInprocMode:
     @patch("vkwr.engine.core.ExecutorInterface.get_class")
     def test_llm_engine_add_request_and_step(self, MockGetClass: MagicMock) -> None:
         from vkwr.engine.llm_engine import LLMEngine
+        from vkwr.tokenizers.rwkv7 import get_tokenizer
+
+        tok = get_tokenizer()
+        if tok is None:
+            pytest.skip("RWKV vocab file not found — cannot encode text prompt")
 
         mock_executor_instance = MagicMock()
         mock_executor_cls = MagicMock(return_value=mock_executor_instance)

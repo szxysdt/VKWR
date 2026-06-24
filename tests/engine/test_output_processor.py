@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
 import pytest
 
 from vkwr.config.model import ModelConfig
@@ -25,13 +23,6 @@ def sample_request():
     )
 
 
-@pytest.fixture
-def mock_tokenizer():
-    tok = MagicMock()
-    tok.decode = MagicMock(return_value="Hello world!")
-    return tok
-
-
 class TestOutputProcessorInit:
     def test_init(self, model_config):
         processor = OutputProcessor(model_config)
@@ -50,13 +41,11 @@ class TestAddRequest:
         assert req_state.finished is False
         assert req_state.finish_reason is None
         assert req_state.token_ids == []
-        assert req_state.text == ""
+        assert req_state.detokenizer.output_text == ""
 
 
 class TestProcessOutputsIncremental:
-    @patch("vkwr.engine.tokenizer.get_tokenizer")
-    def test_incremental_token_accumulation(self, mock_get_tok, model_config, sample_request, mock_tokenizer):
-        mock_get_tok.return_value = mock_tokenizer
+    def test_incremental_token_accumulation(self, model_config, sample_request):
         processor = OutputProcessor(model_config)
         processor.add_request(sample_request)
 
@@ -91,9 +80,7 @@ class TestProcessOutputsIncremental:
 
 
 class TestProcessOutputsFinish:
-    @patch("vkwr.engine.tokenizer.get_tokenizer")
-    def test_finish_returns_output(self, mock_get_tok, model_config, sample_request, mock_tokenizer):
-        mock_get_tok.return_value = mock_tokenizer
+    def test_finish_returns_output(self, model_config, sample_request):
         processor = OutputProcessor(model_config)
         processor.add_request(sample_request)
 
@@ -114,9 +101,7 @@ class TestProcessOutputsFinish:
 
 
 class TestProcessOutputsUnknownRequest:
-    @patch("vkwr.engine.tokenizer.get_tokenizer")
-    def test_unknown_request_id_ignored(self, mock_get_tok, model_config, mock_tokenizer):
-        mock_get_tok.return_value = mock_tokenizer
+    def test_unknown_request_id_ignored(self, model_config):
         processor = OutputProcessor(model_config)
         engine_out = [
             EngineCoreOutput(
@@ -131,9 +116,7 @@ class TestProcessOutputsUnknownRequest:
 
 
 class TestProcessOutputsLogprobs:
-    @patch("vkwr.engine.tokenizer.get_tokenizer")
-    def test_logprobs_accumulation(self, mock_get_tok, model_config, sample_request, mock_tokenizer):
-        mock_get_tok.return_value = mock_tokenizer
+    def test_logprobs_accumulation(self, model_config, sample_request):
         processor = OutputProcessor(model_config)
         processor.add_request(sample_request)
 

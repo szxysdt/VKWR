@@ -80,6 +80,38 @@ class TestSamplingParams:
         sp = SamplingParams(seed=42)
         assert sp.seed == 42
 
+    def test_skip_special_tokens_default(self):
+        sp = SamplingParams()
+        assert sp.skip_special_tokens is True
+
+    def test_skip_special_tokens_false(self):
+        sp = SamplingParams(skip_special_tokens=False)
+        assert sp.skip_special_tokens is False
+
+    def test_spaces_between_special_tokens_default(self):
+        sp = SamplingParams()
+        assert sp.spaces_between_special_tokens is True
+
+    def test_include_stop_str_in_output_default(self):
+        sp = SamplingParams()
+        assert sp.include_stop_str_in_output is False
+
+    def test_include_stop_str_in_output_true(self):
+        sp = SamplingParams(include_stop_str_in_output=True)
+        assert sp.include_stop_str_in_output is True
+
+    def test_min_tokens_default(self):
+        sp = SamplingParams()
+        assert sp.min_tokens == 0
+
+    def test_min_tokens_custom(self):
+        sp = SamplingParams(min_tokens=5)
+        assert sp.min_tokens == 5
+
+    def test_min_tokens_negative(self):
+        with pytest.raises(ValueError, match="min_tokens"):
+            SamplingParams(min_tokens=-1)
+
 
 class TestVkwrRequest:
     def test_basic_request(self):

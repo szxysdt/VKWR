@@ -44,6 +44,7 @@ class RWKVTokenizer:
         self._idx2token: list[bytes] | None = None
         self._token2idx: dict[bytes, int] | None = None
         self._root: _TrieNode | None = None
+        self._special_ids: set[int] = set()
         self._ensure_loaded()
 
     @property
@@ -100,6 +101,7 @@ class RWKVTokenizer:
         self._idx2token = idx2token_list
         self._token2idx = token2idx
         self._root = root
+        self._special_ids: set[int] = {0}
         logger.info("Loaded RWKV vocab from %s (%d tokens)", path, len(idx2token))
 
     def encode(self, text: str) -> list[int]:
@@ -137,6 +139,26 @@ class RWKVTokenizer:
             if tid < len(self._idx2token):
                 raw.append(self._idx2token[tid])
         return b"".join(raw).decode("utf-8", errors="replace")
+
+    @property
+    def all_special_ids(self) -> set[int]:
+        """Return the set of special token IDs."""
+        return self._special_ids
+
+    def is_special(self, token_id: int) -> bool:
+        """Return True if the token ID is a special token."""
+        return token_id in self._special_ids
+
+    def get_token_bytes(self, token_id: int) -> bytes:
+        """Return the raw bytes for a token ID.
+
+        Public accessor used by IncrementalDetokenizer.
+        """
+        self._ensure_loaded()
+        assert self._idx2token is not None
+        if token_id < len(self._idx2token):
+            return self._idx2token[token_id]
+        return b""
 
 
 @functools.cache

@@ -141,10 +141,7 @@ class EngineCoreProc(EngineCore):
                 try:
                     self._process_engine_step()
                 except Exception:
-                    logger.exception(
-                        "EngineCore step failed — aborting all in-flight "
-                        "requests to avoid hanging clients"
-                    )
+                    logger.exception("EngineCore step failed — aborting all in-flight requests to avoid hanging clients")
                     aborted = self.scheduler.finish_requests(None, RequestStatus.FINISHED_ABORTED)
                     if aborted:
                         self._send_abort_outputs(aborted)
