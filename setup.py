@@ -172,7 +172,6 @@ class CMakeBuild(build_ext):
 
 ext_modules = []
 for name in [
-    "_rwkv7_C",
     "_sampling_C",
     "_v1_wkv_fp16_C",
     "_v1_wkv_fp32_C",
