@@ -2,7 +2,7 @@
 #include <torch/library.h>
 
 #include "core/register.h"
-#include "v1/common/v1_check.h"
+#include "v1_check.h"
 #include "mix_ops.h"
 
 std::vector<torch::Tensor> tmix_mix6_fn(

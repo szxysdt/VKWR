@@ -4,7 +4,7 @@
 #include <cuda_fp16.h>
 #include <climits>
 
-#include "v1/common/warp_primitives.cuh"
+#include "common/warp_primitives.cuh"
 
 using dtype = at::Half;
 

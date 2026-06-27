@@ -3,7 +3,7 @@
 
 #include "core/register.h"
 #include "norm_ops.h"
-#include "v1/common/v1_check.h"
+#include "v1_check.h"
 
 std::vector<torch::Tensor> add_layer_norm_tmix_mix6_f16_varlen_fn(
     int64_t total_tokens, torch::Tensor x, torch::Tensor residual,

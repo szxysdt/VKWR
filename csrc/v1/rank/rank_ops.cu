@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <vector>
 
-#include "v1/common/warp_primitives.cuh"
+#include "common/warp_primitives.cuh"
 
 using dtype = at::Half;
 

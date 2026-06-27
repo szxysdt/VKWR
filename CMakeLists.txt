@@ -31,6 +31,14 @@ add_vkwr_extension(
         csrc/sampling/sampling.cu
 )
 
+# Common gather/scatter ops
+add_vkwr_extension(
+    _common_C
+    SOURCES
+        csrc/common/torch_bindings.cpp
+        csrc/common/gather_scatter_ops.cu
+)
+
 # v1-1: WKV core (fp16 + fp32) + advance_i32
 add_vkwr_extension(
     _v1_wkv_fp16_C

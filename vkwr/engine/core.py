@@ -132,8 +132,10 @@ class EngineCore:
                 return {0: merged}, False
             return {}, False
 
-        # 2. Execute model (including sampling)
+        # 2. Execute model forward
         model_output = self.model_executor.execute_model(scheduler_output)
+        # 2a. Sample tokens
+        model_output = self.model_executor.sample_tokens(model_output, scheduler_output)
 
         # 2b. Save state cache for finished requests (before slots are freed)
         self._save_finished_state(scheduler_output)
@@ -210,6 +212,7 @@ class EngineCore:
         if batch_queue and batch_queue[-1][0].done():
             future, sched_out = batch_queue.pop()
             model_output = future.result()
+            model_output = self.model_executor.sample_tokens(model_output, sched_out)
             self._save_finished_state(sched_out)
             self._process_aborts_queue()
             engine_outputs = self.scheduler.update_from_output(sched_out, model_output)

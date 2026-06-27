@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from vkwr._ops.common_ops import gather_decode_state, scatter_decode_state
 from vkwr.model_executor.layers.sampler import RWKV7Sampler
 from vkwr.model_executor.models.rwkv7_varlen import RWKV7
 
@@ -265,12 +266,11 @@ class GPUModelRunner:
         self._scatter_state(state, indices)
         torch.cuda.synchronize()
 
-        model_output = ModelRunnerOutput(
+        return ModelRunnerOutput(
             sampled_token_ids={},
             sampled_logprobs=None,
             logits=logits,
         )
-        return self.sample_tokens(model_output, scheduler_output)
 
     def _execute_uniform_decode(self, scheduler_output: SchedulerOutput) -> ModelRunnerOutput:
         """Uniform decode fast path with CUDA Graph support."""
@@ -279,18 +279,27 @@ class GPUModelRunner:
         B = len(scheduler_output.scheduled_req_ids)
         slot_indices = scheduler_output.slot_indices
 
-        # 1. Gather state into temp buffer (one slot at a time)
-        for i in range(B):
-            slot = slot_indices[i]
-            self._decode_state_shift[:, :, i].copy_(self._state_shift[:, :, slot])
-            self._decode_state_wkv[:, i].copy_(self._state_wkv[:, slot])
-            self._decode_state_elapsed[i].copy_(self._state_elapsed[slot])
-
-        # 2. Gather input tokens from GPU cache — keep on GPU, no .tolist()
+        # 1. Gather state into temp buffer via CUDA kernel
         self._uniform_slot_indices[:B].copy_(
             torch.as_tensor(slot_indices, dtype=torch.long, device="cpu"),
             non_blocking=True,
         )
+        gather_decode_state(
+            self.L,
+            self.C,
+            self.H,
+            self.N,
+            B,
+            self._state_shift,
+            self._state_wkv,
+            self._state_elapsed,
+            self._decode_state_shift,
+            self._decode_state_wkv,
+            self._decode_state_elapsed,
+            self._uniform_slot_indices[:B],
+        )
+
+        # 2. Gather input tokens from GPU cache — keep on GPU, no .tolist()
         decode_tokens_gpu = self._last_sampled_token[self._uniform_slot_indices[:B]]
 
         # Deferred one-step validation: only sync 8-byte scalar
@@ -311,12 +320,21 @@ class GPUModelRunner:
                 self._uniform_tokens[:B].copy_(decode_tokens_gpu, non_blocking=True)
             logits = self.cudagraph_manager.replay(seq_lens)
 
-        # 4. Scatter temp buffer back to global state (one slot at a time)
-        for i in range(B):
-            slot = slot_indices[i]
-            self._state_shift[:, :, slot].copy_(self._decode_state_shift[:, :, i])
-            self._state_wkv[:, slot].copy_(self._decode_state_wkv[:, i])
-            self._state_elapsed[slot].copy_(self._decode_state_elapsed[i])
+        # 4. Scatter temp buffer back to global state via CUDA kernel
+        scatter_decode_state(
+            self.L,
+            self.C,
+            self.H,
+            self.N,
+            B,
+            self._state_shift,
+            self._state_wkv,
+            self._state_elapsed,
+            self._decode_state_shift,
+            self._decode_state_wkv,
+            self._decode_state_elapsed,
+            self._uniform_slot_indices[:B],
+        )
 
         # Synchronise so that scatter and logits are fully visible before
         # sample_tokens writes _last_sampled_token and the next step reads
@@ -326,9 +344,11 @@ class GPUModelRunner:
         # 4b. Optional checkpoint
         self._maybe_checkpoint(scheduler_output, slot_indices)
 
-        # 5. Sample
-        model_output = ModelRunnerOutput(sampled_token_ids={}, logits=logits)
-        return self.sample_tokens(model_output, scheduler_output)
+        return ModelRunnerOutput(
+            sampled_token_ids={},
+            sampled_logprobs=None,
+            logits=logits,
+        )
 
     def _execute_uniform_decode_eager(self, B: int, decode_tokens: torch.Tensor) -> torch.Tensor:
         """Eager fallback for uniform decode when CUDA Graph unavailable."""
@@ -374,6 +394,9 @@ class GPUModelRunner:
         """Sample from logits, return sampling results mapped by req_id."""
         if self.sampler is None:
             raise RuntimeError("Sampler not initialized. Call load_model() first.")
+
+        if not scheduler_output.scheduled_req_ids:
+            return ModelRunnerOutput(sampled_token_ids={})
 
         logits = model_runner_output.logits
         if logits is None:
@@ -453,26 +476,53 @@ class GPUModelRunner:
         )
 
     def _prepare_state(self, scheduler_output: SchedulerOutput) -> tuple[list[torch.Tensor], list[int]]:
-        """Gather state for scheduled requests by slot index, returning contiguous copies."""
+        """Gather state for scheduled requests by slot index into decode temp buffers."""
         if self._state_shift is None or self._state_wkv is None or self._state_elapsed is None:
             raise RuntimeError("State buffers not allocated. Call load_model() first.")
 
         req_ids = scheduler_output.scheduled_req_ids
         indices = [scheduler_output.request_data[rid].slot_index for rid in req_ids]
-
-        shift = torch.stack([self._state_shift[:, :, idx] for idx in indices], dim=2).contiguous()
-        wkv = torch.stack([self._state_wkv[:, idx] for idx in indices], dim=1).contiguous()
-        elapsed = torch.stack([self._state_elapsed[idx] for idx in indices]).contiguous()
-        return [shift, wkv, elapsed], indices
-
-    def _scatter_state(self, state: list[torch.Tensor], indices: list[int]) -> None:
-        """Write updated state back to global buffer, one slot at a time."""
         B = len(indices)
-        for i in range(B):
-            slot = indices[i]
-            self._state_shift[:, :, slot].copy_(state[0][:, :, i])
-            self._state_wkv[:, slot].copy_(state[1][:, i])
-            self._state_elapsed[slot].copy_(state[2][i])
+
+        slot_indices = torch.as_tensor(indices, dtype=torch.long, device=self.device)
+        gather_decode_state(
+            self.L,
+            self.C,
+            self.H,
+            self.N,
+            B,
+            self._state_shift,
+            self._state_wkv,
+            self._state_elapsed,
+            self._decode_state_shift,
+            self._decode_state_wkv,
+            self._decode_state_elapsed,
+            slot_indices,
+        )
+        return [
+            self._decode_state_shift[:, :, :B],
+            self._decode_state_wkv[:, :B],
+            self._decode_state_elapsed[:B],
+        ], indices
+
+    def _scatter_state(self, _state: list[torch.Tensor], indices: list[int]) -> None:
+        """Write updated state back to global buffer via scatter CUDA kernel."""
+        B = len(indices)
+        slot_indices = torch.as_tensor(indices, dtype=torch.long, device=self.device)
+        scatter_decode_state(
+            self.L,
+            self.C,
+            self.H,
+            self.N,
+            B,
+            self._state_shift,
+            self._state_wkv,
+            self._state_elapsed,
+            self._decode_state_shift,
+            self._decode_state_wkv,
+            self._decode_state_elapsed,
+            slot_indices,
+        )
 
     def _slice_state_from_slot(self, slot: int) -> list[torch.Tensor]:
         """Slice a single request's state from the global GPU buffer."""

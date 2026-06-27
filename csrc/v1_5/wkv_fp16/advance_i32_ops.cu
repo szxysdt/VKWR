@@ -1,7 +1,7 @@
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 
-#include "v1/common/warp_primitives.cuh"
+#include "common/warp_primitives.cuh"
 
 namespace {
 

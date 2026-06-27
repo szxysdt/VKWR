@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Future
 from typing import TYPE_CHECKING
 
 import torch
@@ -24,7 +24,6 @@ class UniprocExecutor(ExecutorInterface):
         super().__init__(config, slot_manager)
         self.worker: GPUWorker | None = None
         self._compute_stream = torch.cuda.Stream()
-        self._executor = ThreadPoolExecutor(max_workers=1)
 
     def initialize(self) -> None:
         self.worker = GPUWorker(self.config)
@@ -38,13 +37,24 @@ class UniprocExecutor(ExecutorInterface):
     def execute_model(self, scheduler_output: SchedulerOutput, non_block: bool = False) -> ModelRunnerOutput | Future[ModelRunnerOutput]:
         if self.worker is None:
             raise RuntimeError("Executor not initialized. Call initialize() first.")
+        # Synchronous execution on the calling thread.  This avoids the
+        # cross-thread race where the worker thread reads _last_sampled_token
+        # before the main thread's sample_tokens has written it.  When
+        # non_block=True, we still return a completed Future so the caller's
+        # pipeline logic (batch_queue + future.done() + future.result()) works
+        # unchanged.
+        result = self._run_forward(scheduler_output)
         if non_block:
-            future: Future[ModelRunnerOutput] = self._executor.submit(self._run_forward, scheduler_output)
+            future: Future[ModelRunnerOutput] = Future()
+            future.set_result(result)
             return future
-        return self._run_forward(scheduler_output)
+        return result
 
     def _run_forward(self, scheduler_output: SchedulerOutput) -> ModelRunnerOutput:
         with torch.cuda.stream(self._compute_stream):
+            # Wait for the default stream so that any _last_sampled_token
+            # writes from the previous batch's sample_tokens are visible.
+            self._compute_stream.wait_stream(torch.cuda.default_stream())
             result = self.worker.execute_model(scheduler_output)
             return result
 
@@ -71,4 +81,3 @@ class UniprocExecutor(ExecutorInterface):
         if self.worker is not None:
             self.worker.shutdown()
             self.worker = None
-        self._executor.shutdown(wait=False)

@@ -173,6 +173,7 @@ class CMakeBuild(build_ext):
 ext_modules = []
 for name in [
     "_sampling_C",
+    "_common_C",
     "_v1_wkv_fp16_C",
     "_v1_wkv_fp32_C",
     "_v1_linear_C",

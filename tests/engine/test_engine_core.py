@@ -244,6 +244,7 @@ class TestEngineCoreStep:
         core.scheduler.has_requests = MagicMock(return_value=True)
         core.scheduler.schedule = MagicMock(return_value=scheduler_output)
         core.model_executor.execute_model = MagicMock(return_value=model_output)
+        core.model_executor.sample_tokens = MagicMock(return_value=model_output)
         core.scheduler.update_from_output = MagicMock(return_value=engine_outputs)
         core._initialized = True
 
@@ -256,6 +257,7 @@ class TestEngineCoreStep:
 
         core.scheduler.schedule.assert_called_once()
         core.model_executor.execute_model.assert_called_once_with(scheduler_output)
+        core.model_executor.sample_tokens.assert_called_once_with(model_output, scheduler_output)
         core.scheduler.update_from_output.assert_called_once_with(scheduler_output, model_output)
 
 

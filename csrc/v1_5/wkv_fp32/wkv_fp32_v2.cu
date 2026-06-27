@@ -3,7 +3,7 @@
 #include <assert.h>
 #include <cuda_fp16.h>
 
-#include "v1/common/warp_primitives.cuh"
+#include "common/warp_primitives.cuh"
 
 namespace {
 

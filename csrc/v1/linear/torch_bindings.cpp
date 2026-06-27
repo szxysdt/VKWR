@@ -2,7 +2,7 @@
 #include <torch/library.h>
 
 #include "core/register.h"
-#include "v1/common/v1_check.h"
+#include "v1_check.h"
 #include "linear_ops.h"
 
 torch::Tensor linear_f16_fn(torch::Tensor x, torch::Tensor weight) {
