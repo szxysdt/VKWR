@@ -8,12 +8,12 @@ from typing import TYPE_CHECKING
 import torch
 
 from vkwr._ops.common_ops import gather_decode_state, scatter_decode_state
+from vkwr.engine.outputs import ModelRunnerOutput
 from vkwr.model_executor.layers.sampler import RWKV7Sampler
 from vkwr.model_executor.models.rwkv7_varlen import RWKV7
 
 if TYPE_CHECKING:
     from vkwr.config.engine import VkwrConfig
-    from vkwr.engine.outputs import ModelRunnerOutput
     from vkwr.scheduler.output import SchedulerOutput
     from vkwr.state.state_slot_manager import StateSlotManager
 
@@ -221,8 +221,6 @@ class GPUModelRunner:
         # Guard: scheduled_req_ids may have been emptied by cross-batch
         # cleanup (EngineCore._purge_finished_from_sched).
         if not scheduler_output.scheduled_req_ids:
-            from vkwr.engine.outputs import ModelRunnerOutput
-
             return ModelRunnerOutput(sampled_token_ids={})
 
         # Task 5: Apply batch reorder GPU swap
@@ -242,8 +240,6 @@ class GPUModelRunner:
 
     def _execute_eager(self, scheduler_output: SchedulerOutput) -> ModelRunnerOutput:
         """Eager execution path for non-uniform-decode batches."""
-        from vkwr.engine.outputs import ModelRunnerOutput
-
         # Zero state for new requests
         for req_id in scheduler_output.scheduled_req_ids:
             run_data = scheduler_output.request_data[req_id]
@@ -274,8 +270,6 @@ class GPUModelRunner:
 
     def _execute_uniform_decode(self, scheduler_output: SchedulerOutput) -> ModelRunnerOutput:
         """Uniform decode fast path with CUDA Graph support."""
-        from vkwr.engine.outputs import ModelRunnerOutput
-
         B = len(scheduler_output.scheduled_req_ids)
         slot_indices = scheduler_output.slot_indices
 
@@ -391,7 +385,12 @@ class GPUModelRunner:
         model_runner_output: ModelRunnerOutput,
         scheduler_output: SchedulerOutput,
     ) -> ModelRunnerOutput:
-        """Sample from logits, return sampling results mapped by req_id."""
+        """Sample from logits, return sampling results mapped by req_id.
+
+        Requests that are in chunked-prefill (not the last chunk) are skipped:
+        they do not produce sampled tokens and their logits are not passed to
+        the sampler.
+        """
         if self.sampler is None:
             raise RuntimeError("Sampler not initialized. Call load_model() first.")
 
@@ -402,37 +401,43 @@ class GPUModelRunner:
         if logits is None:
             raise RuntimeError("No logits in model_runner_output")
 
-        sampling_params_list = []
-        req_ids = []
-        for req_id in scheduler_output.scheduled_req_ids:
+        # Separate requests that need sampling from those that don't
+        # (chunked prefill non-last-chunk requests).
+        need_sample_indices: list[int] = []
+        need_sample_req_ids: list[str] = []
+        for idx, req_id in enumerate(scheduler_output.scheduled_req_ids):
             run_data = scheduler_output.request_data[req_id]
-            sampling_params_list.append(run_data.sampling_params)
-            req_ids.append(req_id)
-
-        if not sampling_params_list:
-            from vkwr.engine.outputs import ModelRunnerOutput
-
-            return ModelRunnerOutput(sampled_token_ids={})
-
-        sampled, logprobs = self.sampler(logits.float(), sampling_params_list)
-
-        sampled_list = sampled.tolist()
-
-        sampled_token_ids = {}
-        for idx, req_id in enumerate(req_ids):
-            run_data = scheduler_output.request_data.get(req_id)
             if run_data and (run_data.is_decode or run_data.is_last_prefill):
-                sampled_token_ids[req_id] = [sampled_list[idx]]
+                need_sample_indices.append(idx)
+                need_sample_req_ids.append(req_id)
 
-        # Write last sampled token to per-slot cache.
-        # slot_index here is post-reorder. Since _last_sampled_token
-        # is swapped alongside state in _swap_state_slots(), the mapping is consistent.
-        for req_id, tokens in sampled_token_ids.items():
-            if tokens:
-                slot = scheduler_output.request_data[req_id].slot_index
-                self._last_sampled_token[slot] = tokens[0]
+        if not need_sample_req_ids:
+            return ModelRunnerOutput(sampled_token_ids={}, sampled_logprobs=None, logits=None)
 
-        from vkwr.engine.outputs import ModelRunnerOutput
+        # Slice logits only for requests that need sampling
+        sample_indices = torch.tensor(need_sample_indices, dtype=torch.long, device=self.device)
+        sample_logits = logits.index_select(0, sample_indices)
+
+        sampling_params_list = [
+            scheduler_output.request_data[req_id].sampling_params
+            for req_id in need_sample_req_ids
+        ]
+        sampled, logprobs = self.sampler(sample_logits.float(), sampling_params_list)
+
+        # Write sampled tokens to per-slot cache using GPU-side index_copy_
+        # (avoids .tolist() + per-element scalar writes).
+        slot_indices = torch.tensor(
+            [scheduler_output.request_data[req_id].slot_index for req_id in need_sample_req_ids],
+            dtype=torch.long,
+            device=self.device,
+        )
+        self._last_sampled_token.index_copy_(0, slot_indices, sampled.to(torch.long))
+
+        # Build output dict using GPU tensor directly (no .tolist())
+        sampled_token_ids: dict[str, list[int]] = {}
+        sampled_cpu = sampled.cpu()
+        for i, req_id in enumerate(need_sample_req_ids):
+            sampled_token_ids[req_id] = [int(sampled_cpu[i])]
 
         return ModelRunnerOutput(
             sampled_token_ids=sampled_token_ids,
