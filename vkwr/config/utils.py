@@ -82,19 +82,22 @@ def get_hash_factors(config_obj, ignored_factors=None):
 
 
 def get_default_cudagraph_capture_sizes(max_num_seqs: int, max_num_batched_tokens: int) -> list[int]:
-    """Generate CUDA Graph capture sizes for decode.
+    """Generate sparse CUDA Graph capture sizes for decode.
 
-    Unlike vLLM (Transformer Inference Engine) which can pad a batch to the next captured size,
-    VKWR (RNN Engine) requires exact-match: each seq processes independently with no
-    cross-seq communication, so an uncaptured batch size falls back to eager.
-    This function generates a consecutive 1~max_size list so every possible
-    decode batch size has a dedicated CUDA graph."""
+    Uses a strided strategy: exact sizes for small batches, then step 8 up to 256,
+    then step 16 up to max_size. Larger batches will be padded to the next captured size."""
     max_size = min(max_num_seqs, 512)
     max_size = min(max_size, max_num_batched_tokens)
     if max_size < 1:
         return []
 
-    return list(range(1, max_size + 1))
+    sizes = [1, 2, 4] + list(range(8, 256, 8)) + list(range(256, max_size + 1, 16))
+    sizes = [s for s in sizes if s <= max_size]
+
+    if not sizes or sizes[-1] < max_size:
+        sizes.append(max_size)
+
+    return sorted(set(sizes))
 
 
 def hash_factors(items):

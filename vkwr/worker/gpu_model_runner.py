@@ -188,7 +188,12 @@ class GPUModelRunner:
 
             raw_sizes = self.config.compilation_config.cudagraph_capture_size
             cudagraph_shapes = [(1,) * b for b in raw_sizes] if raw_sizes else None
-            self.cudagraph_manager = CUDAGraphManager(cudagraph_shapes, self.device, emb_cpu=self.model.emb_cpu)
+            self.cudagraph_manager = CUDAGraphManager(
+                cudagraph_shapes,
+                self.device,
+                emb_cpu=self.model.emb_cpu,
+                max_batch_size=self.max_num_seqs,
+            )
             self._cudagraph_enabled = True
         else:
             self.cudagraph_manager = None
@@ -268,6 +273,9 @@ class GPUModelRunner:
 
         slot_indices == [0..B-1] after Runner sorting, so we use the global
         state buffer directly with :B slices — no gather/scatter needed.
+
+        Supports sparse capture with padding: actual B is mapped to the next
+        captured graph size, and dummy positions are zeroed before/after replay.
         """
         B = len(scheduler_output.scheduled_req_ids)
 
@@ -278,16 +286,29 @@ class GPUModelRunner:
                 raise RuntimeError("Some slots have no sampled token. This should not happen if is_last_prefill sampling is correct.")
         self._decode_tokens_min_prev = decode_tokens_gpu.min()
 
-        seq_lens = tuple([1] * B)
-        entry = self.cudagraph_manager.get_graph(seq_lens) if self._cudagraph_enabled else None
-        if entry is None:
+        if self._cudagraph_enabled:
+            graph, _output_logits, padded_B = self.cudagraph_manager.get_graph_with_padding(B)
+        else:
+            graph, _output_logits, padded_B = None, None, B  # type: ignore[assignment]
+
+        if graph is None:
             logits = self._execute_uniform_decode_eager(B, decode_tokens_gpu)
         else:
+            if padded_B > B:
+                self._prepare_padding_state(B, padded_B)
+
             if self.model.emb_cpu:
-                self._prepare_uniform_decode_cpu_emb(B, decode_tokens_gpu)
+                self._prepare_uniform_decode_cpu_emb(B, decode_tokens_gpu, padded_B)
             else:
                 self._uniform_tokens[:B].copy_(decode_tokens_gpu, non_blocking=True)
-            logits = self.cudagraph_manager.replay(seq_lens)
+                if padded_B > B:
+                    self._uniform_tokens[B:padded_B].fill_(0)
+
+            logits = self.cudagraph_manager.replay(tuple([1] * padded_B))
+
+            if padded_B > B:
+                self._cleanup_dummy_state(B, padded_B)
+                logits = logits[:B]
 
         torch.cuda.synchronize()
 
@@ -326,8 +347,11 @@ class GPUModelRunner:
             logits = self.model.forward_from_x(x, state, path, query_start_loc, req_id, 1, B)
         return logits
 
-    def _prepare_uniform_decode_cpu_emb(self, B: int, decode_tokens: torch.Tensor) -> None:
-        """CPU emb mode: embed outside graph, copy to x buffer before replay."""
+    def _prepare_uniform_decode_cpu_emb(self, B: int, decode_tokens: torch.Tensor, padded_B: int = 0) -> None:
+        """CPU emb mode: embed outside graph, copy to x buffer before replay.
+
+        If padded_B > B, also embed dummy tokens (token=0) for padding positions.
+        """
         idx = self._emb_buf_idx & 1
         buf = self._uniform_x_host[idx]
         self._emb_dma_event.wait()
@@ -337,8 +361,37 @@ class GPUModelRunner:
             buf[:B],
             non_blocking=True,
         )
+
+        if padded_B > B:
+            dummy_tokens = torch.zeros(padded_B - B, dtype=torch.long, device="cpu")
+            torch.index_select(
+                self.model.z["emb.weight"],
+                0,
+                dummy_tokens,
+                out=buf[B:padded_B],
+            )
+            self._uniform_x[B:padded_B].copy_(buf[B:padded_B], non_blocking=True)
+
         self._emb_dma_event.record()
         self._emb_buf_idx = 1 - idx
+
+    def _prepare_padding_state(self, B: int, padded_B: int) -> None:
+        """Before replay: zero state for padding positions [B, padded_B)."""
+        self._state_shift[:, :, B:padded_B].zero_()
+        self._state_wkv[:, B:padded_B].zero_()
+        self._state_elapsed[B:padded_B].zero_()
+        self._last_sampled_token[B:padded_B].fill_(0)
+
+    def _cleanup_dummy_state(self, B: int, padded_B: int) -> None:
+        """After replay: zero state for padding positions that graph wrote to.
+
+        RNN models (RWKV7) have no attention mask to isolate pad positions,
+        so dummy forward writes non-zero state that must be cleaned up.
+        """
+        self._state_shift[:, :, B:padded_B].zero_()
+        self._state_wkv[:, B:padded_B].zero_()
+        self._state_elapsed[B:padded_B].zero_()
+        self._last_sampled_token[B:padded_B].fill_(0)
 
     def sample_tokens(
         self,
