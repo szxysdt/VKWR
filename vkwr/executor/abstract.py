@@ -62,6 +62,14 @@ class ExecutorInterface(ABC):
     def compile_or_warm_up_model(self) -> None:
         """Compile or warm up the model"""
 
+    @abstractmethod
+    def condense(self, moves: list[tuple[int, int]]) -> None:
+        """Execute GPU-side state moves for condense.
+
+        Each (src, dst) means move state data from src position to dst position.
+        """
+        pass
+
     def shutdown(self) -> None:
         """Shutdown executor and release resources."""
         pass

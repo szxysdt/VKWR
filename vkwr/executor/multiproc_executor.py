@@ -24,3 +24,6 @@ class MultiprocExecutor(ExecutorInterface):
 
     def compile_or_warm_up_model(self) -> None:
         raise NotImplementedError("MultiprocExecutor is not yet implemented")
+
+    def condense(self, moves: list[tuple[int, int]]) -> None:
+        raise NotImplementedError("MultiprocExecutor.condense is not yet implemented")

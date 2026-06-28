@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 
 from vkwr.engine.outputs import EngineCoreOutput, EngineCoreOutputs
 from vkwr.engine.request import RequestStatus, VkwrRequest
-from vkwr.scheduler.batch_reorder import reorder_batch_to_split_decodes_and_prefills
 from vkwr.scheduler.interface import SchedulerInterface
 from vkwr.scheduler.output import RequestRunData, SchedulerOutput
 from vkwr.scheduler.request_queue import (
@@ -71,8 +70,6 @@ class SimpleScheduler(SchedulerInterface):
                     self.running.remove(req)
                     self._running_map.pop(req_id, None)
                     self.running_output_tokens.pop(req_id, None)
-                    if self.slot_manager:
-                        self.slot_manager.free(req_id)
                     finished_ids.append(req_id)
                     continue
 
@@ -91,8 +88,6 @@ class SimpleScheduler(SchedulerInterface):
             req.status = status
             self._running_map.pop(req.request_id, None)
             self.running_output_tokens.pop(req.request_id, None)
-            if self.slot_manager:
-                self.slot_manager.free(req.request_id)
             finished_ids.append(req.request_id)
 
         while self.waiting:
@@ -122,8 +117,12 @@ class SimpleScheduler(SchedulerInterface):
         request_data: dict[str, RequestRunData] = {}
         finished_req_ids: set[str] = set()
 
-        # ── Phase 1: Schedule RUNNING requests ────────────────────
-        for req in self.running:
+        # ── Phase 1: Schedule RUNNING requests (sorted by slot_index ascending) ──
+        running_sorted = sorted(
+            self.running,
+            key=lambda r: self.slot_manager.get_slot(r.request_id) if self.slot_manager else 0,
+        )
+        for req in running_sorted:
             rid = req.request_id
             is_decode = req.is_decode
 
@@ -322,9 +321,6 @@ class SimpleScheduler(SchedulerInterface):
 
         slot_indices = [self.slot_manager.get_slot(req_id) if self.slot_manager else 0 for req_id in scheduler_output.scheduled_req_ids]
 
-        sorted_indices = reorder_batch_to_split_decodes_and_prefills(scheduler_output, decode_threshold=1)
-
-        scheduler_output.sorted_indices = sorted_indices
         scheduler_output.slot_indices = slot_indices
 
         return scheduler_output
@@ -369,10 +365,13 @@ class SimpleScheduler(SchedulerInterface):
             completed_tokens = self.running_output_tokens.pop(req_id, [])
             self.running = [r for r in self.running if r.request_id != req_id]
             if self.slot_manager:
-                try:
-                    self.slot_manager.free(req_id)
-                except KeyError:
-                    pass
+                run_data = scheduler_output.request_data.get(req_id)
+                if run_data:
+                    scheduler_output.freed_slots.append((req_id, run_data.slot_index))
+                elif req_id in self.slot_manager.req_to_slot:
+                    scheduler_output.freed_slots.append((req_id, self.slot_manager.req_to_slot[req_id]))
+                else:
+                    continue
 
             run_data = scheduler_output.request_data.get(req_id)
             finish_reason, stop_reason = _classify_finish_reason(req, run_data, completed_tokens)

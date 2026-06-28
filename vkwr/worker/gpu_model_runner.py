@@ -218,24 +218,19 @@ class GPUModelRunner:
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
 
-        # Guard: scheduled_req_ids may have been emptied by cross-batch
-        # cleanup (EngineCore._purge_finished_from_sched).
         if not scheduler_output.scheduled_req_ids:
             return ModelRunnerOutput(sampled_token_ids={})
 
-        # Task 5: Apply batch reorder GPU swap
-        if scheduler_output.sorted_indices is not None:
-            self._apply_batch_reorder(
-                scheduler_output,
-                scheduler_output.sorted_indices,
-                scheduler_output.slot_indices,
-            )
-
-        # Task 3: Route to uniform decode or eager path
         is_uniform = self._is_uniform_decode(scheduler_output)
+
         if is_uniform:
+            slot_indices = [scheduler_output.request_data[rid].slot_index for rid in scheduler_output.scheduled_req_ids]
+            order = sorted(range(len(slot_indices)), key=lambda i: slot_indices[i])
+            scheduler_output.scheduled_req_ids = [scheduler_output.scheduled_req_ids[i] for i in order]
+            scheduler_output.slot_indices = [slot_indices[i] for i in order]
             return self._execute_uniform_decode(scheduler_output)
         else:
+            self._reorder_batch(scheduler_output)
             return self._execute_eager(scheduler_output)
 
     def _execute_eager(self, scheduler_output: SchedulerOutput) -> ModelRunnerOutput:
@@ -269,40 +264,20 @@ class GPUModelRunner:
         )
 
     def _execute_uniform_decode(self, scheduler_output: SchedulerOutput) -> ModelRunnerOutput:
-        """Uniform decode fast path with CUDA Graph support."""
+        """Uniform decode fast path with CUDA Graph support.
+
+        slot_indices == [0..B-1] after Runner sorting, so we use the global
+        state buffer directly with :B slices — no gather/scatter needed.
+        """
         B = len(scheduler_output.scheduled_req_ids)
-        slot_indices = scheduler_output.slot_indices
 
-        # 1. Gather state into temp buffer via CUDA kernel
-        self._uniform_slot_indices[:B].copy_(
-            torch.as_tensor(slot_indices, dtype=torch.long, device="cpu"),
-            non_blocking=True,
-        )
-        gather_decode_state(
-            self.L,
-            self.C,
-            self.H,
-            self.N,
-            B,
-            self._state_shift,
-            self._state_wkv,
-            self._state_elapsed,
-            self._decode_state_shift,
-            self._decode_state_wkv,
-            self._decode_state_elapsed,
-            self._uniform_slot_indices[:B],
-        )
+        decode_tokens_gpu = self._last_sampled_token[:B]
 
-        # 2. Gather input tokens from GPU cache — keep on GPU, no .tolist()
-        decode_tokens_gpu = self._last_sampled_token[self._uniform_slot_indices[:B]]
-
-        # Deferred one-step validation: only sync 8-byte scalar
         if hasattr(self, "_decode_tokens_min_prev") and self._decode_tokens_min_prev is not None:
             if self._decode_tokens_min_prev.item() < 0:
                 raise RuntimeError("Some slots have no sampled token. This should not happen if is_last_prefill sampling is correct.")
         self._decode_tokens_min_prev = decode_tokens_gpu.min()
 
-        # 3. Forward: CUDA Graph replay OR eager fallback (decode_tokens stays on GPU)
         seq_lens = tuple([1] * B)
         entry = self.cudagraph_manager.get_graph(seq_lens) if self._cudagraph_enabled else None
         if entry is None:
@@ -314,28 +289,9 @@ class GPUModelRunner:
                 self._uniform_tokens[:B].copy_(decode_tokens_gpu, non_blocking=True)
             logits = self.cudagraph_manager.replay(seq_lens)
 
-        # 4. Scatter temp buffer back to global state via CUDA kernel
-        scatter_decode_state(
-            self.L,
-            self.C,
-            self.H,
-            self.N,
-            B,
-            self._state_shift,
-            self._state_wkv,
-            self._state_elapsed,
-            self._decode_state_shift,
-            self._decode_state_wkv,
-            self._decode_state_elapsed,
-            self._uniform_slot_indices[:B],
-        )
-
-        # Synchronise so that scatter and logits are fully visible before
-        # sample_tokens writes _last_sampled_token and the next step reads
-        # state / token caches.
         torch.cuda.synchronize()
 
-        # 4b. Optional checkpoint
+        slot_indices = list(range(B))
         self._maybe_checkpoint(scheduler_output, slot_indices)
 
         return ModelRunnerOutput(
@@ -345,7 +301,11 @@ class GPUModelRunner:
         )
 
     def _execute_uniform_decode_eager(self, B: int, decode_tokens: torch.Tensor) -> torch.Tensor:
-        """Eager fallback for uniform decode when CUDA Graph unavailable."""
+        """Eager fallback for uniform decode using global state buffer :B slice.
+
+        No gather needed — slot_indices == [0..B-1] after Runner sorting.
+        Uses self._state_shift/elapsed directly (not self._decode_state_*).
+        """
         if self.model.emb_cpu:
             self._prepare_uniform_decode_cpu_emb(B, decode_tokens)
             x = self._uniform_x[:B]
@@ -353,9 +313,9 @@ class GPUModelRunner:
             x = self.model.embed(decode_tokens[:B])
 
         state = [
-            self._decode_state_shift[:, :, :B],
-            self._decode_state_wkv[:, :B],
-            self._decode_state_elapsed[:B],
+            self._state_shift[:, :, :B],
+            self._state_wkv[:, :B],
+            self._state_elapsed[:B],
         ]
 
         query_start_loc = self._uniform_query_start_loc[: B + 1]
@@ -418,20 +378,16 @@ class GPUModelRunner:
         sample_indices = torch.tensor(need_sample_indices, dtype=torch.long, device=self.device)
         sample_logits = logits.index_select(0, sample_indices)
 
-        sampling_params_list = [
-            scheduler_output.request_data[req_id].sampling_params
-            for req_id in need_sample_req_ids
-        ]
+        sampling_params_list = [scheduler_output.request_data[req_id].sampling_params for req_id in need_sample_req_ids]
         sampled, logprobs = self.sampler(sample_logits.float(), sampling_params_list)
 
-        # Write sampled tokens to per-slot cache using GPU-side index_copy_
-        # (avoids .tolist() + per-element scalar writes).
-        slot_indices = torch.tensor(
-            [scheduler_output.request_data[req_id].slot_index for req_id in need_sample_req_ids],
-            dtype=torch.long,
-            device=self.device,
-        )
-        self._last_sampled_token.index_copy_(0, slot_indices, sampled.to(torch.long))
+        # Write sampled tokens to per-slot cache.
+        slot_positions = [scheduler_output.request_data[req_id].slot_index for req_id in need_sample_req_ids]
+        if len(need_sample_req_ids) > 0 and slot_positions == list(range(len(need_sample_req_ids))):
+            self._last_sampled_token[: len(need_sample_req_ids)].copy_(sampled.to(torch.long))
+        else:
+            slot_indices = torch.tensor(slot_positions, dtype=torch.long, device=self.device)
+            self._last_sampled_token.index_copy_(0, slot_indices, sampled.to(torch.long))
 
         # Build output dict using GPU tensor directly (no .tolist())
         sampled_token_ids: dict[str, list[int]] = {}
@@ -563,40 +519,94 @@ class GPUModelRunner:
         self._state_elapsed[[i, j]] = self._state_elapsed[[j, i]]
         self._last_sampled_token[[i, j]] = self._last_sampled_token[[j, i]]
 
-    def _apply_batch_reorder(
-        self,
-        scheduler_output: SchedulerOutput,
-        sorted_indices,
-        slot_indices: list[int],
-    ) -> None:
-        """Apply GPU-side state swap for batch reorder using cycle-based swap."""
-        num_reqs = len(sorted_indices)
-        visited = [False] * num_reqs
+    def _condense_slots(self, moves: list[tuple[int, int]]) -> None:
+        """Execute GPU-side state condense: move state from src_slot to dst_slot."""
+        for src_slot, dst_slot in moves:
+            self._state_shift[:, :, dst_slot] = self._state_shift[:, :, src_slot]
+            self._state_wkv[:, dst_slot] = self._state_wkv[:, src_slot]
+            self._state_elapsed[dst_slot] = self._state_elapsed[src_slot]
+            self._last_sampled_token[dst_slot] = self._last_sampled_token[src_slot]
 
-        for src in range(num_reqs):
-            if visited[src]:
-                continue
-            if sorted_indices[src] == src:
-                visited[src] = True
-                continue
+    def _reorder_batch(self, scheduler_output: SchedulerOutput) -> bool:
+        """Reorder mixed-batch: atomically swap CPU list + GPU state.
 
-            cycle = [src]
-            visited[src] = True
-            dst = sorted_indices[src]
-            while dst != src:
-                cycle.append(dst)
-                visited[dst] = True
-                dst = sorted_indices[dst]
+        Inspired by vLLM's _may_reorder_batch() which uses
+        self-resolving while-loop + swap_states() to execute the permutation.
 
-            for k in range(len(cycle) - 1):
-                a_pos, b_pos = cycle[k], cycle[k + 1]
-                a_slot, b_slot = slot_indices[a_pos], slot_indices[b_pos]
-                self._swap_state_slots(a_slot, b_slot)
-                slot_indices[a_pos], slot_indices[b_pos] = b_slot, a_slot
-                req_a = scheduler_output.scheduled_req_ids[a_pos]
-                req_b = scheduler_output.scheduled_req_ids[b_pos]
-                scheduler_output.request_data[req_a].slot_index = b_slot
-                scheduler_output.request_data[req_b].slot_index = a_slot
+        Scheme B: Runner owns batch order. The Scheduler outputs
+        scheduled_req_ids in construction order (NOT sorted). This method
+        independently computes region classification, derives the permutation,
+        and executes it via self-resolving swap (inspired by vLLM):
+
+        For each (src, dst) pair that needs swapping:
+          1. GPU:  _swap_state_slots(slot_indices[src], slot_indices[dst])
+          2. slot_indices[src] <-> slot_indices[dst]
+          3. scheduled_req_ids[src] <-> scheduled_req_ids[dst]  (scheme B core)
+          4. request_data[...] .slot_index sync for both positions
+          Then mark dst as settled (src_dest_map[dst] = dst) and jump to next dst.
+
+        Does NOT call reorder_batch_to_split_decodes_and_prefills() because
+        batch_reorder.py:56 mutates scheduled_req_ids (double-reorder risk).
+        Instead, inlines the same region classification + argsort logic.
+
+        Returns True if reorder was performed.
+        """
+        import numpy as np
+
+        slot_indices = scheduler_output.slot_indices
+        num_reqs = len(slot_indices)
+        if num_reqs <= 1:
+            return False
+
+        regions = np.zeros(num_reqs, dtype=np.int32)
+        for i, rid in enumerate(scheduler_output.scheduled_req_ids):
+            rd = scheduler_output.request_data[rid]
+            has_context = rd.num_computed_tokens > 0
+            is_below_threshold = rd.num_tokens <= 1
+            done_prefilling = rd.num_computed_tokens >= len(rd.prompt_token_ids)
+            if not has_context:
+                regions[i] = 3
+            elif not is_below_threshold:
+                regions[i] = 2
+            elif not done_prefilling:
+                regions[i] = 1
+            else:
+                regions[i] = 0
+
+        sorted_indices = np.argsort(regions, kind="stable")
+        if np.array_equal(sorted_indices, np.arange(num_reqs)):
+            return False
+
+        src_dest_map: dict[int, int] = {}
+        for dst_pos in range(num_reqs):
+            src_pos = int(sorted_indices[dst_pos])
+            if src_pos != dst_pos:
+                src_dest_map[src_pos] = dst_pos
+
+        if not src_dest_map:
+            return False
+
+        for src in src_dest_map:
+            dst = src_dest_map[src]
+            while src != dst:
+                self._swap_state_slots(slot_indices[src], slot_indices[dst])
+                slot_indices[src], slot_indices[dst] = slot_indices[dst], slot_indices[src]
+                scheduler_output.scheduled_req_ids[src], scheduler_output.scheduled_req_ids[dst] = (
+                    scheduler_output.scheduled_req_ids[dst],
+                    scheduler_output.scheduled_req_ids[src],
+                )
+                scheduler_output.request_data[scheduler_output.scheduled_req_ids[src]].slot_index = slot_indices[src]
+                scheduler_output.request_data[scheduler_output.scheduled_req_ids[dst]].slot_index = slot_indices[dst]
+                next_dst = src_dest_map.get(dst, dst)
+                src_dest_map[dst] = dst
+                dst = next_dst
+
+        for i in range(num_reqs):
+            rid = scheduler_output.scheduled_req_ids[i]
+            self.slot_manager.req_to_slot[rid] = slot_indices[i]
+            self.slot_manager.slot_to_req[slot_indices[i]] = rid
+
+        return True
 
     def warmup(self) -> None:
         """Basic warmup: run a small-batch forward pass"""
@@ -631,9 +641,9 @@ class GPUModelRunner:
         max_t = max(seq_lens)
 
         state = [
-            self._decode_state_shift[:, :, :B],
-            self._decode_state_wkv[:, :B],
-            self._decode_state_elapsed[:B],
+            self._state_shift[:, :, :B],
+            self._state_wkv[:, :B],
+            self._state_elapsed[:B],
         ]
 
         self._uniform_query_start_loc[: B + 1].copy_(

@@ -77,6 +77,12 @@ class UniprocExecutor(ExecutorInterface):
             raise RuntimeError("Executor not initialized. Call initialize() first.")
         self.worker.compile_or_warm_up_model()
 
+    def condense(self, moves: list[tuple[int, int]]) -> None:
+        if not moves:
+            return
+        runner = self.worker.model_runner
+        runner._condense_slots(moves)
+
     def shutdown(self) -> None:
         if self.worker is not None:
             self.worker.shutdown()

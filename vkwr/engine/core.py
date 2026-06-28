@@ -123,8 +123,11 @@ class EngineCore:
 
                 fake_model_output = ModelRunnerOutput(sampled_token_ids={})
                 self._save_finished_state(scheduler_output)
-                self._process_aborts_queue()
+                all_freed_slots: list[tuple[str, int]] = []
+                all_freed_slots.extend(self._process_aborts_queue())
                 engine_outputs = self.scheduler.update_from_output(scheduler_output, fake_model_output)
+                all_freed_slots.extend(scheduler_output.freed_slots)
+                self._batch_condense(all_freed_slots)
                 merged = EngineCoreOutputs(
                     outputs=[eo for eo_list in engine_outputs.values() for eo in eo_list.outputs],
                     timestamp=time.monotonic(),
@@ -140,11 +143,14 @@ class EngineCore:
         # 2b. Save state cache for finished requests (before slots are freed)
         self._save_finished_state(scheduler_output)
 
-        # Process abort queue
-        self._process_aborts_queue()
-
-        # 3. Update scheduler state and generate engine outputs
+        # Collect all freed slots (abort + EOS/max_tokens)
+        all_freed_slots: list[tuple[str, int]] = []
+        all_freed_slots.extend(self._process_aborts_queue())
         engine_outputs = self.scheduler.update_from_output(scheduler_output, model_output)
+        all_freed_slots.extend(scheduler_output.freed_slots)
+
+        # Batch condense
+        self._batch_condense(all_freed_slots)
 
         # 4. Merge all request outputs
         merged = EngineCoreOutputs(
@@ -156,13 +162,22 @@ class EngineCore:
     def post_step(self, model_executed: bool) -> None:
         pass
 
-    def _process_aborts_queue(self):
+    def _process_aborts_queue(self) -> list[tuple[str, int]]:
         if not self.aborts_queue.empty():
             request_ids: list[str] = []
             while not self.aborts_queue.empty():
                 ids = self.aborts_queue.get_nowait()
                 request_ids.extend((ids,) if isinstance(ids, str) else ids)
             self.abort_requests(request_ids)
+            return [(rid, self.slot_manager.req_to_slot[rid]) for rid in request_ids if rid in self.slot_manager.req_to_slot]
+        return []
+
+    def _batch_condense(self, freed_slots: list[tuple[str, int]]) -> None:
+        if not freed_slots:
+            return
+        moves = self.slot_manager.batch_condense(freed_slots)
+        if moves:
+            self.model_executor.condense(moves)
 
     def abort_requests(self, request_ids: list[str]) -> dict[int, EngineCoreOutputs]:
         from vkwr.engine.outputs import EngineCoreOutput, EngineCoreOutputs
@@ -214,8 +229,11 @@ class EngineCore:
             model_output = future.result()
             model_output = self.model_executor.sample_tokens(model_output, sched_out)
             self._save_finished_state(sched_out)
-            self._process_aborts_queue()
+            all_freed_slots: list[tuple[str, int]] = []
+            all_freed_slots.extend(self._process_aborts_queue())
             engine_outputs = self.scheduler.update_from_output(sched_out, model_output)
+            all_freed_slots.extend(sched_out.freed_slots)
+            self._batch_condense(all_freed_slots)
             processed_merged = EngineCoreOutputs(
                 outputs=[eo for eo_list in engine_outputs.values() for eo in eo_list.outputs],
                 timestamp=time.monotonic(),
@@ -236,8 +254,11 @@ class EngineCore:
 
         fake_model_output = ModelRunnerOutput(sampled_token_ids={})
         self._save_finished_state(scheduler_output)
-        self._process_aborts_queue()
+        all_freed_slots: list[tuple[str, int]] = []
+        all_freed_slots.extend(self._process_aborts_queue())
         engine_outputs = self.scheduler.update_from_output(scheduler_output, fake_model_output)
+        all_freed_slots.extend(scheduler_output.freed_slots)
+        self._batch_condense(all_freed_slots)
         merged = EngineCoreOutputs(
             outputs=[eo for eo_list in engine_outputs.values() for eo in eo_list.outputs],
             timestamp=time.monotonic(),

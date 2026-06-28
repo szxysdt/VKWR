@@ -209,3 +209,28 @@ class TestUniprocExecutor:
         executor.initialize()
         executor.compile_or_warm_up_model()
         MockGPUWorker.return_value.compile_or_warm_up_model.assert_called_once()
+
+    @patch("vkwr.executor.uniproc_executor.GPUWorker")
+    def test_condense_calls_runner(self, MockGPUWorker):
+        from vkwr.executor.uniproc_executor import UniprocExecutor
+
+        config = _make_config()
+        executor = UniprocExecutor(config)
+        executor.initialize()
+
+        moves = [(2, 0), (3, 1)]
+        executor.condense(moves)
+
+        MockGPUWorker.return_value.model_runner._condense_slots.assert_called_once_with(moves)
+
+    @patch("vkwr.executor.uniproc_executor.GPUWorker")
+    def test_condense_empty(self, MockGPUWorker):
+        from vkwr.executor.uniproc_executor import UniprocExecutor
+
+        config = _make_config()
+        executor = UniprocExecutor(config)
+        executor.initialize()
+
+        executor.condense([])
+
+        MockGPUWorker.return_value.model_runner._condense_slots.assert_not_called()
