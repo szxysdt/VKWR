@@ -37,7 +37,8 @@ class RWKV7:
         self.config, z, emb_src, ln0_w_src, ln0_b_src, emb_cpu = self._load_and_detect_dims()
         self._preprocess_weights(z, emb_cpu)
         self._build_fused_emb_ln0(z, emb_src, ln0_w_src, ln0_b_src, emb_cpu)
-        self._stack_rkv_weights(z)
+        if self.inference_config.rkv_mode != "off" and not self.weight_config.use_orig_linear("att_c2c"):
+            self._stack_rkv_weights(z)
 
         self.z = z
         self.emb_cpu = self.inference_config.emb_device == "cpu"
