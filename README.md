@@ -68,6 +68,18 @@ See [`docs/api.md`](docs/api.md) for details and examples.
 
 All models share a vocabulary size of 65536 and a head size of 64.
 
+## Benchmark
+
+> ### **The higher the concurrency, the larger the VKWR advantage.**
+>
+> **w32** (low): VKWR leads by **+13%** throughput vs vLLM  
+> **w64** (vLLM sweet spot): VKWR leads by **+31%** throughput, TPOT tied  
+> **w128–w192** (high pressure): VKWR delivers **2× throughput**, while vLLM saturates (TTFT 615ms → 53s)  
+>
+> RWKV has no KV Cache — under heavy load, VKWR keeps scaling while vLLM chokes.
+
+Full results: [docs/benchmark/4060-laptop/](https://github.com/szxysdt/VKWR/tree/benchmark/benchmark-4060laptop/docs/benchmark/4060-laptop/) (RTX 4060 Laptop, RWKV7-1.5B vs Qwen3.5-2B)
+
 ## Requirements
 
 - Python 3.10+
