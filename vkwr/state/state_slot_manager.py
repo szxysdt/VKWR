@@ -12,6 +12,27 @@ class StateSlotManager:
         self.req_to_slot: dict[str, int] = {}
         self.slot_to_req: dict[int, str] = {}
         self.free_slots: list[int] = list(range(max_slots))
+        self._pad_slots: list[int] = []
+
+    def reserve_pad_slots(self, n: int) -> list[int]:
+        """Borrow N free slots for CUDA graph padding."""
+        if n > len(self.free_slots):
+            raise RuntimeError(f"Only {len(self.free_slots)} free slots, requested {n} for padding")
+        self._pad_slots = self.free_slots[:n]
+        self.free_slots = self.free_slots[n:]
+        return self._pad_slots
+
+    def release_pad_slots(self) -> None:
+        """Return pad slots back to free pool."""
+        if self._pad_slots:
+            self.free_slots.extend(self._pad_slots)
+            self.free_slots.sort()
+            self._pad_slots = []
+
+    @property
+    def available_pad_count(self) -> int:
+        """Free slots available for padding (excluding pad reservations)."""
+        return len(self.free_slots)
 
     def allocate(self, req_id: str) -> int:
         """Allocate a free slot. Returns slot index. Raises RuntimeError if exhausted."""

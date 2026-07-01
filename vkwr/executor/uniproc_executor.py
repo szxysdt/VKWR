@@ -78,10 +78,10 @@ class UniprocExecutor(ExecutorInterface):
         self.worker.compile_or_warm_up_model()
 
     def condense(self, moves: list[tuple[int, int]]) -> None:
-        if not moves:
-            return
-        runner = self.worker.model_runner
-        runner._condense_slots(moves)
+        """v2x: no-op. CPU-side slot_manager.batch_condense() already updated
+        req_to_slot / slot_to_req maps. GPU state is addressed by slot_indices,
+        physical contiguity is not required."""
+        pass
 
     def shutdown(self) -> None:
         if self.worker is not None:

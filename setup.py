@@ -184,6 +184,14 @@ for name in [
     "_v1_5_wkv_fp32_C",
     "_v1_5_mix_C",
     "_v1_5_norm_C",
+    "_v2_wkv_fp16_C",
+    "_v2_wkv_fp32_C",
+    "_v2_norm_C",
+    "_v2_mix_C",
+    "_v2_5_wkv_fp16_C",
+    "_v2_5_wkv_fp32_C",
+    "_v2_5_mix_C",
+    "_v2_5_norm_C",
 ]:
     ext_modules.append(Extension(f"vkwr.{name}", sources=[]))
 

@@ -5,31 +5,47 @@ from vkwr._ops.v1.v1_norm_ops import (
     add_f16,
     add_last_layer_norm_f16,
     add_layer_norm_f16,
-    add_layer_norm_tmix_mix6_f16,
     emb_ln0_bf16_to_f16,
     layer_norm_f16,
 )
 from vkwr._ops.v1.v1_wkv_ops import HEAD_SIZE
-from vkwr._ops.v1_5 import import_all_v1_5_ops
 from vkwr._ops.v1_5.v1_5_norm_ops import add_last_layer_norm_f16_varlen
-from vkwr._ops.v1_5.v1_5_wkv_ops import advance_i32_varlen
+from vkwr._ops.v2 import import_all_v2_ops
+from vkwr._ops.v2.v2_norm_ops import add_layer_norm_tmix_mix6_f16
+from vkwr._ops.v2_5 import import_all_v2_5_ops
+from vkwr._ops.v2_5.v2_5_wkv_ops import advance_i32_varlen
 from vkwr.config.model import RWKV7Config, RWKV7InferenceConfig, WeightConfig
-from vkwr.model_executor.layers.channel_mix_varlen import RWKV7ChannelMixDispatcher
+from vkwr.model_executor.layers.channel_mix_varlen_v2x import RWKV7ChannelMixDispatcher
 from vkwr.model_executor.layers.linear import RWKV7LinearDispatcher
 from vkwr.model_executor.layers.path_dispatcher_config_varlen import CmixConfig, CmixThresholds, PathConfig, PathSelector
-from vkwr.model_executor.layers.time_mix_varlen import RWKV7TimeMixDispatcher
+from vkwr.model_executor.layers.time_mix_varlen_v2x import RWKV7TimeMixDispatcher
 from vkwr.model_executor.utils import cuda_mem, log
 
 
 class RWKV7:
+    """RWKV7 varlen model using v2/v2_5 ops with slot_indices mapping.
+
+    Differences from rwkv7_varlen.py (v1/v1_5):
+    - State is global [max_slots, ...] instead of per-request [B, ...]
+    - slot_indices: [B] (int32) maps request batch index -> physical GPU slot
+    - Ops with state dependency use v2x series (v2/v2_5) with slot_indices mapping
+    - Ops without state dependency use v1/v1.5 equivalents
+    - No max_slots parameter — runner manages state buffer size
+
+    Production state buffer shapes (managed by GPUModelRunner):
+        state[0] (shift_state): [L, 2, max_slots, C] - fp16
+        state[1] (wkv_state): [L, max_slots, H, N, N] - fp16/fp32
+        state[2] (elapsed): [max_slots] - int32
+    """
+
     def __init__(
         self,
         model_path: str,
         weight_config: WeightConfig | None = None,
         inference_config: RWKV7InferenceConfig | None = None,
     ) -> None:
-        import_all_v1_5_ops()
-        # self._setup_torch_backend()
+        import_all_v2_ops()
+        import_all_v2_5_ops()
         self.weight_config = weight_config if weight_config is not None else WeightConfig()
         self.inference_config = inference_config if inference_config is not None else RWKV7InferenceConfig()
         self.cmix_thresholds = CmixThresholds()
@@ -156,6 +172,12 @@ class RWKV7:
         return self.z["blocks.0.att.r_k"].device
 
     def zero_state(self, B: int) -> list[torch.Tensor]:
+        """Create zero-initialized state for B requests (used for warmup/testing).
+
+        Production state is managed by GPUModelRunner with [max_slots, ...] shape.
+        This method returns [B, ...]-shaped tensors suitable for single-batch
+        warmup forward passes or small-scale tests.
+        """
         cfg = self.config
         wkv_dtype = torch.float32 if self.inference_config.wkv_mode == "fp32io16" else self.inference_config.dtype
         return [
@@ -170,12 +192,13 @@ class RWKV7:
         state: list[torch.Tensor],
         query_start_loc: torch.Tensor,
         max_t: int,
+        slot_indices: torch.Tensor,
     ) -> torch.Tensor:
         B = query_start_loc.size(0) - 1
         path = self.path_selector.select(B, max_t, total_tokens=tokens.size(0))
         x = self.embed(tokens)
         req_id = self._build_req_id(tokens, query_start_loc)
-        return self.forward_from_x(x, state, path, query_start_loc, req_id, max_t, B)
+        return self.forward_from_x(x, state, path, query_start_loc, req_id, max_t, B, slot_indices)
 
     def embed(self, tokens: torch.Tensor) -> torch.Tensor:
         if not self.emb_cpu:
@@ -211,6 +234,7 @@ class RWKV7:
         req_id: torch.Tensor,
         max_t: int,
         B: int,
+        slot_indices: torch.Tensor,
         all_logits: bool = False,
     ) -> torch.Tensor:
         z = self.z
@@ -236,18 +260,19 @@ class RWKV7:
                 B,
                 is_uniform,
                 pre_mix,
+                slot_indices,
             )
             pre_mix = None
 
             if layer + 1 < self.config.L:
-                x, xx, pre_mix = self._compute_next_layer_pre_mix(x, xx, state, layer, is_uniform, max_t, B)
+                x, xx, pre_mix = self._compute_next_layer_pre_mix(layer, x, xx, state, is_uniform, max_t, B, slot_indices)
             elif not all_logits:
-                return self._finalize_last_layer(x, xx, state, query_start_loc, max_t, is_uniform, B)
+                return self._finalize_last_layer(x, xx, state, query_start_loc, max_t, is_uniform, B, slot_indices)
             else:
                 x = self.add(x, xx)
 
         x = (x.contiguous(), z["ln_out.weight"], z["ln_out.bias"])
-        advance_i32_varlen(state[2], query_start_loc)
+        advance_i32_varlen(state[2], query_start_loc, slot_indices)
         return self.linear_head(x)
 
     def _forward_layer_body(
@@ -265,6 +290,7 @@ class RWKV7:
         B: int,
         is_uniform: bool,
         pre_mix=None,
+        slot_indices: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         z = self.z
         p = param_prefix
@@ -285,6 +311,7 @@ class RWKV7:
             B,
             is_uniform,
             pre_mix=pre_mix,
+            slot_indices=slot_indices,
         )
 
         # Channel mix: add_ln + cmix (split path for varlen)
@@ -299,23 +326,25 @@ class RWKV7:
             B,
             is_uniform,
             max_t,
+            slot_indices=slot_indices,
         )
 
         return x, xx, v_first
 
     def _compute_next_layer_pre_mix(
         self,
+        layer: int,
         x: torch.Tensor,
         xx: torch.Tensor,
         state: list[torch.Tensor],
-        layer: int,
         is_uniform: bool,
-        max_t: int,
+        T: int,
         B: int,
+        slot_indices: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         z = self.z
         p_next = f"blocks.{layer + 1}."
-        if self.inference_config.ln1_tmix_fuse and is_uniform and max_t == 1 and B == 1:
+        if self.inference_config.ln1_tmix_fuse and is_uniform and T == 1 and B == 1:
             x3d = x.view(1, 1, self.config.C).contiguous()
             xx3d = xx.view(1, 1, self.config.C).contiguous()
             outs = add_layer_norm_tmix_mix6_f16(
@@ -330,6 +359,7 @@ class RWKV7:
                 z[p_next + "att.x_v"],
                 z[p_next + "att.x_a"],
                 z[p_next + "att.x_g"],
+                slot_indices,
             )
             x = outs[0].view(B, self.config.C)
             pre_mix = outs[1:]
@@ -348,6 +378,7 @@ class RWKV7:
         max_t: int,
         is_uniform: bool,
         B: int,
+        slot_indices: torch.Tensor,
     ) -> torch.Tensor:
         z = self.z
         if is_uniform:
@@ -360,7 +391,7 @@ class RWKV7:
         else:
             total_tokens = x.size(0)
             x_out = add_last_layer_norm_f16_varlen(total_tokens, x.contiguous(), xx.contiguous(), z["ln_out.weight"], z["ln_out.bias"], query_start_loc)
-        advance_i32_varlen(state[2], query_start_loc)
+        advance_i32_varlen(state[2], query_start_loc, slot_indices)
         return self.linear_head(x_out)
 
     def linear_head(self, x):

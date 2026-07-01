@@ -126,3 +126,81 @@ add_vkwr_extension(
         csrc/v1_5/norm/torch_bindings.cpp
         csrc/v1_5/norm/norm_ops.cu
 )
+
+# ============================================================
+# v2: WKV core with slot_indices mapping (non-varlen)
+# ============================================================
+
+# v2: WKV core (fp16 + fp32) + advance_i32
+add_vkwr_extension(
+    _v2_wkv_fp16_C
+    SOURCES
+        csrc/v2/wkv_fp16/torch_bindings.cpp
+        csrc/v2/wkv_fp16/wkv_fp16_v2.cu
+        csrc/v2/advance/advance_i32_ops.cu
+    DEFINITIONS _IO_FP16_
+    NO_FAST_MATH
+)
+
+add_vkwr_extension(
+    _v2_wkv_fp32_C
+    SOURCES
+        csrc/v2/wkv_fp32/torch_bindings.cpp
+        csrc/v2/wkv_fp32/wkv_fp32_v2.cu
+    DEFINITIONS _IO_FP16_
+)
+
+# v2: LayerNorm + Add+LN fusion
+add_vkwr_extension(
+    _v2_norm_C
+    SOURCES
+        csrc/v2/norm/torch_bindings.cpp
+        csrc/v2/norm/norm_ops.cu
+)
+
+# v2: TMIX + CMIX + Activation
+add_vkwr_extension(
+    _v2_mix_C
+    SOURCES
+        csrc/v2/mix/torch_bindings.cpp
+        csrc/v2/mix/mix_ops.cu
+)
+
+# ============================================================
+# v2.5: WKV core with slot_indices mapping (varlen)
+# ============================================================
+
+# v2_5: WKV core (fp16 + fp32) + advance_i32
+add_vkwr_extension(
+    _v2_5_wkv_fp16_C
+    SOURCES
+        csrc/v2_5/wkv_fp16/torch_bindings.cpp
+        csrc/v2_5/wkv_fp16/wkv_fp16_v2.cu
+        csrc/v2_5/advance/advance_i32_ops.cu
+    DEFINITIONS _IO_FP16_
+    NO_FAST_MATH
+)
+
+add_vkwr_extension(
+    _v2_5_wkv_fp32_C
+    SOURCES
+        csrc/v2_5/wkv_fp32/torch_bindings.cpp
+        csrc/v2_5/wkv_fp32/wkv_fp32_v2.cu
+    DEFINITIONS _IO_FP16_
+)
+
+# v2_5: Mix ops — varlen
+add_vkwr_extension(
+    _v2_5_mix_C
+    SOURCES
+        csrc/v2_5/mix/torch_bindings.cpp
+        csrc/v2_5/mix/mix_ops.cu
+)
+
+# v2_5: Norm ops — varlen (fused + add_last_ln only)
+add_vkwr_extension(
+    _v2_5_norm_C
+    SOURCES
+        csrc/v2_5/norm/torch_bindings.cpp
+        csrc/v2_5/norm/norm_ops.cu
+)

@@ -355,6 +355,12 @@ def _core_proc_target(
     """Target function for background EngineCore process."""
     import torch
 
+    if not logging.root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
+
     if isinstance(device, str):
         device_idx = 0 if device == "cuda" else int(device.split(":")[-1])
     else:
