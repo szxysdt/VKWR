@@ -23,21 +23,20 @@ find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 # so there is no need to call enable_language(CUDA) explicitly.
 find_package(Torch REQUIRED)
 
-# Phase 1: RWKV7
-add_vkwr_extension(
-    _rwkv7_C
-    SOURCES
-        csrc/rwkv7/torch_bindings.cpp
-        csrc/rwkv7/state_fwd_fp16.cu
-    DEFINITIONS _N_=64 ENABLE_L2_PREFETCH=0
-)
-
 # Phase 3: Sampling
 add_vkwr_extension(
     _sampling_C
     SOURCES
         csrc/sampling/torch_bindings.cpp
         csrc/sampling/sampling.cu
+)
+
+# Common gather/scatter ops
+add_vkwr_extension(
+    _common_C
+    SOURCES
+        csrc/common/torch_bindings.cpp
+        csrc/common/gather_scatter_ops.cu
 )
 
 # v1-1: WKV core (fp16 + fp32) + advance_i32
@@ -126,4 +125,82 @@ add_vkwr_extension(
     SOURCES
         csrc/v1_5/norm/torch_bindings.cpp
         csrc/v1_5/norm/norm_ops.cu
+)
+
+# ============================================================
+# v2: WKV core with slot_indices mapping (non-varlen)
+# ============================================================
+
+# v2: WKV core (fp16 + fp32) + advance_i32
+add_vkwr_extension(
+    _v2_wkv_fp16_C
+    SOURCES
+        csrc/v2/wkv_fp16/torch_bindings.cpp
+        csrc/v2/wkv_fp16/wkv_fp16_v2.cu
+        csrc/v2/advance/advance_i32_ops.cu
+    DEFINITIONS _IO_FP16_
+    NO_FAST_MATH
+)
+
+add_vkwr_extension(
+    _v2_wkv_fp32_C
+    SOURCES
+        csrc/v2/wkv_fp32/torch_bindings.cpp
+        csrc/v2/wkv_fp32/wkv_fp32_v2.cu
+    DEFINITIONS _IO_FP16_
+)
+
+# v2: LayerNorm + Add+LN fusion
+add_vkwr_extension(
+    _v2_norm_C
+    SOURCES
+        csrc/v2/norm/torch_bindings.cpp
+        csrc/v2/norm/norm_ops.cu
+)
+
+# v2: TMIX + CMIX + Activation
+add_vkwr_extension(
+    _v2_mix_C
+    SOURCES
+        csrc/v2/mix/torch_bindings.cpp
+        csrc/v2/mix/mix_ops.cu
+)
+
+# ============================================================
+# v2.5: WKV core with slot_indices mapping (varlen)
+# ============================================================
+
+# v2_5: WKV core (fp16 + fp32) + advance_i32
+add_vkwr_extension(
+    _v2_5_wkv_fp16_C
+    SOURCES
+        csrc/v2_5/wkv_fp16/torch_bindings.cpp
+        csrc/v2_5/wkv_fp16/wkv_fp16_v2.cu
+        csrc/v2_5/advance/advance_i32_ops.cu
+    DEFINITIONS _IO_FP16_
+    NO_FAST_MATH
+)
+
+add_vkwr_extension(
+    _v2_5_wkv_fp32_C
+    SOURCES
+        csrc/v2_5/wkv_fp32/torch_bindings.cpp
+        csrc/v2_5/wkv_fp32/wkv_fp32_v2.cu
+    DEFINITIONS _IO_FP16_
+)
+
+# v2_5: Mix ops — varlen
+add_vkwr_extension(
+    _v2_5_mix_C
+    SOURCES
+        csrc/v2_5/mix/torch_bindings.cpp
+        csrc/v2_5/mix/mix_ops.cu
+)
+
+# v2_5: Norm ops — varlen (fused + add_last_ln only)
+add_vkwr_extension(
+    _v2_5_norm_C
+    SOURCES
+        csrc/v2_5/norm/torch_bindings.cpp
+        csrc/v2_5/norm/norm_ops.cu
 )

@@ -10,7 +10,7 @@ from vkwr.engine.request import SamplingParams, VkwrRequest
 from vkwr.utils import _random_uuid
 
 if TYPE_CHECKING:
-    from vkwr.engine.tokenizer import RWKVTokenizer
+    from vkwr.tokenizers.rwkv7 import RWKVTokenizer
 
 logger = logging.getLogger(__name__)
 

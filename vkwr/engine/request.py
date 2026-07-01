@@ -44,6 +44,10 @@ class SamplingParams(msgspec.Struct, dict=True, omit_defaults=True):
     seed: int | None = None
     use_beam_search: bool = False
     output_kind: int = 0
+    skip_special_tokens: bool = True
+    spaces_between_special_tokens: bool = True
+    include_stop_str_in_output: bool = False
+    min_tokens: int = 0
 
     def __post_init__(self):
         if self.n < 1:
@@ -72,6 +76,8 @@ class SamplingParams(msgspec.Struct, dict=True, omit_defaults=True):
             self.stop = [self.stop]
         if self.stop and any(not s for s in self.stop):
             raise ValueError("stop cannot contain an empty string")
+        if self.min_tokens < 0:
+            raise ValueError("min_tokens must be >= 0")
         if self.temperature < 1e-5:
             self.top_p = 1.0
             self.top_k = 0

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
-
-import numpy as np
 
 if TYPE_CHECKING:
     from vkwr.engine.request import SamplingParams
@@ -30,5 +28,5 @@ class SchedulerOutput:
     total_num_scheduled_tokens: int
     finished_req_ids: set[str]
     request_data: dict[str, RequestRunData]
-    sorted_indices: np.ndarray | None = None
+    freed_slots: list[tuple[str, int]] = field(default_factory=list)
     slot_indices: list[int] | None = None

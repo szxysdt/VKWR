@@ -169,11 +169,12 @@ def _make_chat_completion_chunk(
     model: str,
     created: int | None = None,
     is_first: bool = False,
+    usage: dict | None = None,
 ) -> str:
     """Build an SSE streaming delta chunk (chat.completion)."""
     if created is None:
         created = int(time.time())
-    chunk = {
+    chunk: dict = {
         "id": f"chatcmpl-{request_id}",
         "object": "chat.completion.chunk",
         "created": created,
@@ -189,6 +190,8 @@ def _make_chat_completion_chunk(
             }
         ],
     }
+    if usage is not None:
+        chunk["usage"] = usage
     return f"data: {json.dumps(chunk)}\n\n"
 
 
@@ -233,17 +236,33 @@ async def _stream_completion(
     req_id = generate_request_id("stream")
 
     async def event_generator():
+        last_out = None
         try:
             async for out in async_engine.generate(prompt, sampling_params, req_id):
                 text = out.outputs[0].text if out.outputs else ""
                 delta = _make_completion_chunk(req_id, text, out.finish_reason, model, created)
                 yield delta
+                last_out = out
         except EngineDeadError:
             yield _make_completion_chunk(req_id, "", "error", model, created)
             return
         except EngineGenerateError:
             yield _make_completion_chunk(req_id, "", "error", model, created)
             return
+
+        if last_out is not None:
+            prompt_len = len(last_out.prompt_token_ids)
+            completion_len = len(last_out.outputs[0].token_ids) if last_out.outputs else 0
+            usage_chunk = {
+                "id": f"cmpl-{req_id}",
+                "object": "text_completion",
+                "usage": {
+                    "prompt_tokens": prompt_len,
+                    "completion_tokens": completion_len,
+                    "total_tokens": prompt_len + completion_len,
+                },
+            }
+            yield f"data: {json.dumps(usage_chunk)}\n\n"
 
         yield "data: [DONE]\n\n"
 
@@ -262,17 +281,29 @@ async def _stream_chat_completion(
 
     async def event_generator():
         yield _make_chat_completion_chunk(req_id, "", None, model, created, is_first=True)
+        last_out = None
         try:
             async for out in async_engine.generate(prompt, sampling_params, req_id):
                 text = out.outputs[0].text if out.outputs else ""
                 delta = _make_chat_completion_chunk(req_id, text, out.finish_reason, model, created)
                 yield delta
+                last_out = out
         except EngineDeadError:
             yield _make_chat_completion_chunk(req_id, "", "error", model, created)
             return
         except EngineGenerateError:
             yield _make_chat_completion_chunk(req_id, "", "error", model, created)
             return
+
+        if last_out is not None:
+            prompt_len = len(last_out.prompt_token_ids)
+            completion_len = len(last_out.outputs[0].token_ids) if last_out.outputs else 0
+            usage = {
+                "prompt_tokens": prompt_len,
+                "completion_tokens": completion_len,
+                "total_tokens": prompt_len + completion_len,
+            }
+            yield _make_chat_completion_chunk(req_id, "", None, model, created, usage=usage)
 
         yield "data: [DONE]\n\n"
 

@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from vkwr.config.model import ModelConfig
+from vkwr.engine.detokenizer import IncrementalDetokenizer
 from vkwr.engine.outputs import (
     CompletionOutput,
     EngineCoreOutput,
@@ -17,7 +18,7 @@ from vkwr.engine.outputs import (
 from vkwr.engine.request import RequestOutputKind, VkwrRequest
 
 if TYPE_CHECKING:
-    from vkwr.engine.tokenizer import RWKVTokenizer
+    from vkwr.tokenizers.rwkv7 import RWKVTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,6 @@ class _RequestState:
     request: VkwrRequest
     external_req_id: str
     token_ids: list[int]
-    text: str
     logprobs: list[dict[int, float]] | None
     cumlogprob: float
     finished: bool
@@ -45,12 +45,17 @@ class _RequestState:
     output_kind: RequestOutputKind
     sent_tokens_offset: int
     is_prefilling: bool
+    detokenizer: IncrementalDetokenizer | None
 
-    def __init__(self, request: VkwrRequest, queue: RequestOutputCollector | None = None):
+    def __init__(
+        self,
+        request: VkwrRequest,
+        queue: RequestOutputCollector | None = None,
+        detokenizer: IncrementalDetokenizer | None = None,
+    ):
         self.request = request
         self.external_req_id = request.external_req_id or request.request_id
         self.token_ids: list[int] = []
-        self.text = ""
         self.logprobs: list[dict[int, float]] | None = None
         self.cumlogprob = 0.0
         self.finished = False
@@ -60,23 +65,17 @@ class _RequestState:
         self.output_kind = request.sampling_params.output_kind
         self.sent_tokens_offset = 0
         self.is_prefilling = True
+        self.detokenizer = detokenizer
 
-    def make_request_output(self, prev_text: str = "") -> RequestOutput:
-        """Build a RequestOutput snapshot.
-
-        Args:
-            prev_text: Previous full text (for DELTA mode text slicing).
-
-        For DELTA mode, only includes tokens/text since the last sent output.
-        For CUMULATIVE mode, includes all tokens from the start.
-        """
+    def make_request_output(self) -> RequestOutput:
+        """Build a RequestOutput snapshot from detokenizer state."""
         if self.output_kind == RequestOutputKind.DELTA:
             delta_ids = self.token_ids[self.sent_tokens_offset :]
-            delta_text = self.text[len(prev_text) :] if delta_ids else ""
+            delta_text = self.detokenizer.get_next_output_text(finished=self.finished, delta=True) if self.detokenizer else ""
             delta_logprobs = self.logprobs[self.sent_tokens_offset :] if self.logprobs else None
         else:
             delta_ids = list(self.token_ids)
-            delta_text = self.text
+            delta_text = self.detokenizer.get_next_output_text(finished=self.finished, delta=False) if self.detokenizer else ""
             delta_logprobs = list(self.logprobs) if self.logprobs else None
 
         return RequestOutput(
@@ -180,7 +179,14 @@ class OutputProcessor:
         """
         request_id = request.request_id
         external_req_id = request.external_req_id or request_id
-        self._requests[request_id] = _RequestState(request, queue)
+        self._requests[request_id] = _RequestState(
+            request,
+            queue,
+            detokenizer=IncrementalDetokenizer(
+                tokenizer=self._tokenizer,
+                sampling_params=request.sampling_params,
+            ),
+        )
         self.external_req_ids.setdefault(external_req_id, []).append(request_id)
 
     def process_outputs(
@@ -195,67 +201,70 @@ class OutputProcessor:
         """
         self._finished_ids.clear()
         streaming_outputs: list[RequestOutput] = []
+        reqs_to_abort: list[str] = []
 
         for core_output in engine_core_outputs:
             req_state = self._requests.get(core_output.request_id)
             if req_state is None:
                 logger.warning(
-                    "Unknown request_id %s in engine output (already removed from "
-                    "output processor — likely a stale pending batch), skipping",
+                    "Unknown request_id %s in engine output (already removed from output processor — likely a stale pending batch), skipping",
                     core_output.request_id,
                 )
                 continue
 
-            # Accumulate new tokens
+            # Accumulate new token_ids.
             req_state.token_ids.extend(core_output.new_token_ids)
             if core_output.new_logprobs is not None:
                 if req_state.logprobs is None:
                     req_state.logprobs = []
                 req_state.logprobs.extend(core_output.new_logprobs)
 
-            # Detect finish
-            if core_output.finish_reason is not None:
+            # Detect finish from engine (token-level stop: eos, max_tokens, etc.)
+            engine_terminated = core_output.finish_reason is not None
+            if engine_terminated:
                 req_state.finish_reason = core_output.finish_reason
                 req_state.stop_reason = core_output.stop_reason
                 req_state.finished = True
 
-            # Decode full text (save previous for delta computation)
-            prev_text = req_state.text
-            req_state.text = self._decode_tokens(req_state.token_ids)
+            # Incremental decode + text-level stop strings check.
+            matched_stop = req_state.detokenizer.update(
+                core_output.new_token_ids,
+                stop_terminated=engine_terminated,
+            )
+            if matched_stop is not None:
+                req_state.finished = True
+                req_state.finish_reason = "stop"
+                req_state.stop_reason = matched_stop
 
-            # Build RequestOutput snapshot (uses external_req_id)
-            req_output = req_state.make_request_output(prev_text=prev_text)
+                if not engine_terminated:
+                    reqs_to_abort.append(req_state.request.request_id)
 
-            # FINAL_ONLY: only emit on completion
+            # Build RequestOutput snapshot.
+            req_output = req_state.make_request_output()
+
+            # FINAL_ONLY: only emit on completion.
             if req_state.output_kind == RequestOutputKind.FINAL_ONLY and not req_state.finished:
                 continue
 
-            # Push to async queue or collect for sync return
+            # Push to async queue or collect for sync return.
             if req_state.queue is not None:
                 req_state.queue.put(req_output)
             else:
                 streaming_outputs.append(req_output)
 
-            # Update sent offset for next delta
+            # Update sent offset for next delta.
             if not req_state.finished:
                 req_state.sent_tokens_offset = len(req_state.token_ids)
 
-            # Flip is_prefilling AFTER stats computation for this request
             req_state.is_prefilling = False
 
-            # Track finished requests (by internal ID)
             if req_state.finished:
                 self._finished_ids.append(req_state.request.request_id)
 
-        return OutputProcessorOutput(request_outputs=streaming_outputs)
-
-    def _decode_tokens(self, token_ids: list[int]) -> str:
-        """Decode token IDs to text."""
-        if not token_ids:
-            return ""
-        if self._tokenizer is not None:
-            return self._tokenizer.decode(token_ids)
-        return ""
+        return OutputProcessorOutput(
+            request_outputs=streaming_outputs,
+            reqs_to_abort=reqs_to_abort,
+        )
 
     def get_and_clear_finished_ids(self) -> list[str]:
         """Return and clear the list of finished internal request IDs."""

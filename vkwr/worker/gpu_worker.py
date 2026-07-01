@@ -61,15 +61,16 @@ class GPUWorker(WorkerBase):
 
         if self.model_runner._cudagraph_enabled and self.model_runner.cudagraph_manager:
             n_shapes = len(self.model_runner.cudagraph_manager.capture_shapes)
-            logger.info("Starting CUDA Graph capture: %d graphs for batch sizes 1~%d", n_shapes, n_shapes)
-            for shape in self.model_runner.cudagraph_manager.capture_shapes:
+            capture_sizes = self.model_runner.cudagraph_manager._capture_sizes
+            logger.info(
+                "Starting CUDA Graph capture: %d graphs for sizes %s",
+                n_shapes,
+                capture_sizes,
+            )
+            for shape in reversed(self.model_runner.cudagraph_manager.capture_shapes):
                 self.model_runner._capture_for_shape(shape)
             n = len(self.model_runner.cudagraph_manager._entries)
-            logger.info(
-                "CUDA Graph captured: %d graphs for batch sizes 1~%d",
-                n,
-                n,
-            )
+            logger.info("CUDA Graph captured: %d graphs", n)
 
     def shutdown(self) -> None:
         if self.model_runner is not None:

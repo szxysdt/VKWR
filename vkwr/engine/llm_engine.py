@@ -33,7 +33,7 @@ class LLMEngine:
 
         tokenizer = None
         if not config.model_config.skip_tokenizer_init:
-            from vkwr.engine.tokenizer import get_tokenizer
+            from vkwr.tokenizers.rwkv7 import get_tokenizer
 
             tokenizer = get_tokenizer(config.model_config.tokenizer)
         else:

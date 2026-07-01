@@ -4,6 +4,7 @@ from vkwr.config.scheduler import SchedulerConfig
 from vkwr.engine.outputs import ModelRunnerOutput
 from vkwr.engine.request import RequestStatus, SamplingParams, VkwrRequest
 from vkwr.scheduler import SimpleScheduler
+from vkwr.state.state_slot_manager import StateSlotManager
 
 
 def _make_config(
@@ -318,3 +319,195 @@ class TestSimpleSchedulerUpdateFromOutput:
         assert "req-1" in engine_outputs
         core_out = engine_outputs["req-1"].outputs[0]
         assert core_out.new_token_ids == [42]
+
+
+class TestDeferredFree:
+    """Phase 2: update_from_output defers slot free via freed_slots."""
+
+    def test_update_from_output_defers_free(self):
+        slot_manager = StateSlotManager(4)
+        sched = SimpleScheduler(_make_config(chunked_prefill_threshold=512), slot_manager=slot_manager)
+        sp = SamplingParams(max_tokens=10)
+        sp.eos_token_id = 0
+        req = _make_request(
+            request_id="req-1",
+            prompt_token_ids=[1],
+            sampling_params=sp,
+        )
+        sched.add_request(req)
+        out = sched.schedule()
+
+        slot_before = slot_manager.req_to_slot.get("req-1")
+        model_output = _make_model_output(token_id=0)
+        sched.update_from_output(out, model_output)
+
+        assert "req-1" in slot_manager.req_to_slot
+        assert slot_manager.req_to_slot["req-1"] == slot_before
+
+    def test_update_from_output_collects_freed_slots(self):
+        slot_manager = StateSlotManager(4)
+        sched = SimpleScheduler(_make_config(chunked_prefill_threshold=512), slot_manager=slot_manager)
+        sp = SamplingParams(max_tokens=10)
+        sp.eos_token_id = 0
+        req = _make_request(
+            request_id="req-1",
+            prompt_token_ids=[1],
+            sampling_params=sp,
+        )
+        sched.add_request(req)
+        out = sched.schedule()
+        assert out.request_data["req-1"].is_last_prefill is True
+
+        model_output = _make_model_output(token_id=0)
+        sched.update_from_output(out, model_output)
+
+        assert "req-1" in out.finished_req_ids
+        assert len(out.freed_slots) == 1
+        assert out.freed_slots[0][0] == "req-1"
+
+    def test_finish_requests_defers_free(self):
+        slot_manager = StateSlotManager(4)
+        sched = SimpleScheduler(_make_config(chunked_prefill_threshold=512), slot_manager=slot_manager)
+        req = _make_request(prompt_token_ids=[1, 2, 3, 4, 5])
+        sched.add_request(req)
+        sched.schedule()
+
+        assert "req-1" in slot_manager.req_to_slot
+        finished = sched.finish_requests({"req-1"})
+        assert finished == ["req-1"]
+        assert "req-1" in slot_manager.req_to_slot
+
+    def test_finish_requests_shutdown_defers_free(self):
+        slot_manager = StateSlotManager(4)
+        sched = SimpleScheduler(_make_config(chunked_prefill_threshold=512), slot_manager=slot_manager)
+        req = _make_request(prompt_token_ids=[1, 2, 3, 4, 5])
+        sched.add_request(req)
+        sched.schedule()
+
+        assert "req-1" in slot_manager.req_to_slot
+        finished = sched.finish_requests(None)
+        assert "req-1" in finished
+        assert "req-1" in slot_manager.req_to_slot
+
+    def test_finish_requests_returns_list_str(self):
+        slot_manager = StateSlotManager(4)
+        sched = SimpleScheduler(_make_config(chunked_prefill_threshold=512), slot_manager=slot_manager)
+        req = _make_request(prompt_token_ids=[1, 2, 3, 4, 5])
+        sched.add_request(req)
+        sched.schedule()
+
+        result = sched.finish_requests({"req-1"})
+        assert isinstance(result, list)
+        assert all(isinstance(r, str) for r in result)
+
+    def test_slot_sorted_output_pure_decode(self):
+        slot_manager = StateSlotManager(8)
+        sched = SimpleScheduler(_make_config(chunked_prefill_threshold=512), slot_manager=slot_manager)
+
+        req_a = _make_request(request_id="req-a", prompt_token_ids=[1], sampling_params=SamplingParams(max_tokens=5))
+        req_b = _make_request(request_id="req-b", prompt_token_ids=[2], sampling_params=SamplingParams(max_tokens=5))
+        req_c = _make_request(request_id="req-c", prompt_token_ids=[3], sampling_params=SamplingParams(max_tokens=5))
+
+        sched.add_request(req_a)
+        sched.add_request(req_b)
+        sched.add_request(req_c)
+
+        out1 = sched.schedule()
+
+        model_output = ModelRunnerOutput(
+            sampled_token_ids={"req-a": [10], "req-b": [20], "req-c": [30]},
+            sampled_logprobs=None,
+            logits=None,
+        )
+        sched.update_from_output(out1, model_output)
+
+        out2 = sched.schedule()
+        slots = [out2.request_data[rid].slot_index for rid in out2.scheduled_req_ids]
+        assert slots == sorted(slots)
+
+    def test_no_reorder_for_mixed_batch(self):
+        slot_manager = StateSlotManager(4)
+        sched = SimpleScheduler(_make_config(chunked_prefill_threshold=2), slot_manager=slot_manager)
+
+        req_a = _make_request(request_id="req-a", prompt_token_ids=[1], sampling_params=SamplingParams(max_tokens=5))
+        req_b = _make_request(request_id="req-b", prompt_token_ids=[10, 20, 30, 40])
+
+        sched.add_request(req_a)
+        sched.add_request(req_b)
+
+        out1 = sched.schedule()
+
+        sched.update_from_output(out1, _make_model_output(req_id="req-a", token_id=10))
+
+        out2 = sched.schedule()
+        assert "req-b" in out2.scheduled_req_ids
+
+
+class TestSchedulerNoReorder:
+    """Phase 3: Scheduler no longer calls reorder or produces sorted_indices."""
+
+    def test_scheduler_no_reorder_call(self):
+        """schedule() does not import or call reorder_batch_to_split_decodes_and_prefills."""
+        import importlib
+
+        sched_module = importlib.import_module("vkwr.scheduler.scheduler")
+        source = getattr(sched_module, "__file__", "")
+        assert source is not None
+
+        with open(source) as f:
+            content = f.read()
+
+        assert "reorder_batch_to_split_decodes_and_prefills" not in content
+
+    def test_scheduler_no_sorted_indices_output(self):
+        """SchedulerOutput does not have sorted_indices field."""
+        import dataclasses
+
+        from vkwr.scheduler.output import SchedulerOutput
+
+        fields = {f.name for f in dataclasses.fields(SchedulerOutput)}
+        assert "sorted_indices" not in fields
+
+    def test_scheduler_slot_sorted_running_phase1(self):
+        """schedule() Phase 1 running requests sorted by slot_index ascending."""
+        slot_manager = StateSlotManager(8)
+        sched = SimpleScheduler(_make_config(chunked_prefill_threshold=512), slot_manager=slot_manager)
+
+        req_a = _make_request(request_id="req-a", prompt_token_ids=[1], sampling_params=SamplingParams(max_tokens=5))
+        req_b = _make_request(request_id="req-b", prompt_token_ids=[2], sampling_params=SamplingParams(max_tokens=5))
+        req_c = _make_request(request_id="req-c", prompt_token_ids=[3], sampling_params=SamplingParams(max_tokens=5))
+
+        sched.add_request(req_a)
+        sched.add_request(req_b)
+        sched.add_request(req_c)
+
+        out1 = sched.schedule()
+
+        model_output = ModelRunnerOutput(
+            sampled_token_ids={"req-a": [10], "req-b": [20], "req-c": [30]},
+            sampled_logprobs=None,
+            logits=None,
+        )
+        sched.update_from_output(out1, model_output)
+
+        out2 = sched.schedule()
+        slots = [out2.request_data[rid].slot_index for rid in out2.scheduled_req_ids]
+        assert slots == sorted(slots)
+
+    def test_scheduler_mixed_batch_no_reorder(self):
+        """schedule() does not reorder mixed batch — maintains running -> waiting order."""
+        slot_manager = StateSlotManager(4)
+        sched = SimpleScheduler(_make_config(chunked_prefill_threshold=2), slot_manager=slot_manager)
+
+        req_a = _make_request(request_id="req-a", prompt_token_ids=[1], sampling_params=SamplingParams(max_tokens=5))
+        req_b = _make_request(request_id="req-b", prompt_token_ids=[10, 20, 30, 40])
+
+        sched.add_request(req_a)
+        sched.add_request(req_b)
+
+        out1 = sched.schedule()
+
+        sched.update_from_output(out1, _make_model_output(req_id="req-a", token_id=10))
+
+        out2 = sched.schedule()
+        assert "req-b" in out2.scheduled_req_ids

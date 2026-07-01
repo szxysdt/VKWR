@@ -5,6 +5,7 @@ from vkwr._ops.v1.v1_norm_ops import (
     add_f16,
     add_last_layer_norm_f16,
     add_layer_norm_f16,
+    add_layer_norm_tmix_mix6_f16,
     emb_ln0_bf16_to_f16,
     layer_norm_f16,
 )
@@ -315,8 +316,6 @@ class RWKV7:
         z = self.z
         p_next = f"blocks.{layer + 1}."
         if self.inference_config.ln1_tmix_fuse and is_uniform and max_t == 1 and B == 1:
-            from vkwr._ops.v1.v1_norm_ops import add_layer_norm_tmix_mix6_f16
-
             x3d = x.view(1, 1, self.config.C).contiguous()
             xx3d = xx.view(1, 1, self.config.C).contiguous()
             outs = add_layer_norm_tmix_mix6_f16(

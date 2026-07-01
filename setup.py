@@ -172,8 +172,8 @@ class CMakeBuild(build_ext):
 
 ext_modules = []
 for name in [
-    "_rwkv7_C",
     "_sampling_C",
+    "_common_C",
     "_v1_wkv_fp16_C",
     "_v1_wkv_fp32_C",
     "_v1_linear_C",
@@ -184,11 +184,21 @@ for name in [
     "_v1_5_wkv_fp32_C",
     "_v1_5_mix_C",
     "_v1_5_norm_C",
+    "_v2_wkv_fp16_C",
+    "_v2_wkv_fp32_C",
+    "_v2_norm_C",
+    "_v2_mix_C",
+    "_v2_5_wkv_fp16_C",
+    "_v2_5_wkv_fp32_C",
+    "_v2_5_mix_C",
+    "_v2_5_norm_C",
 ]:
     ext_modules.append(Extension(f"vkwr.{name}", sources=[]))
 
 
 setup(
+    name="vkwr",
+    version="0.1.0",
     ext_modules=ext_modules,
     cmdclass={"build_ext": CMakeBuild},
 )

@@ -3,7 +3,7 @@
 
 #include "core/register.h"
 #include "mix_ops.h"
-#include "v1/common/v1_check.h"
+#include "v1_check.h"
 
 std::vector<torch::Tensor> tmix_mix6_varlen_fn(
     int64_t B, int64_t total_tokens, int64_t C, torch::Tensor x,

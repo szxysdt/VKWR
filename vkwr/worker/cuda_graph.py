@@ -3,7 +3,8 @@
 CUDA Graph capture and replay for RWKV7 inference.
 
 Manages varlen-aware CUDA Graph entries keyed by tuple[int] (seq_lens).
-FULL mode only, no padding, no sampling-in-graph.
+Supports sparse capture with padding: actual batch sizes are mapped to the
+next captured size, and dummy positions are padded during replay.
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ class CUDAGraphManager:
     First encounter captures, subsequent calls replay.
 
     - FULL mode only
-    - No padding (exact match, key = tuple(seq_lens))
+    - Sparse capture with padding (vLLM-style)
     - No sampling in graph
     - Embedding inside/outside graph depends on emb_cpu
     """
@@ -36,21 +37,55 @@ class CUDAGraphManager:
         capture_shapes: list[tuple[int]] | None,
         device: torch.device,
         emb_cpu: bool = False,
+        max_batch_size: int = 64,
     ):
         self.capture_shapes = capture_shapes or [(1,) * b for b in range(1, 65)]
         self.device = device
         self.emb_cpu = emb_cpu
+        self._max_batch_size = max_batch_size
         # shape_key (tuple[int]) -> (graph, output_logits)
         self._entries: dict[tuple[int], tuple[torch.cuda.CUDAGraph, torch.Tensor]] = {}
         self._stream: torch.cuda.Stream | None = None
         self._capturing = False
 
+        self._capture_sizes = sorted(set(len(s) for s in self.capture_shapes))
+        self._bs_to_padded: dict[int, int] = self._compute_bs_to_padded()
+
+    def _compute_bs_to_padded(self) -> dict[int, int]:
+        """For each batch size 1..max_batch_size, find the smallest capture size >= bs."""
+        mapping: dict[int, int] = {}
+        for bs in range(1, self._max_batch_size + 1):
+            padded = None
+            for cs in self._capture_sizes:
+                if cs >= bs:
+                    padded = cs
+                    break
+            if padded is not None:
+                mapping[bs] = padded
+        return mapping
+
     def get_graph(self, seq_lens: tuple[int]) -> tuple[torch.cuda.CUDAGraph, torch.Tensor] | None:
-        """Get a captured CUDA Graph.
+        """Get a captured CUDA Graph by exact seq_lens match.
 
         Returns (graph, output_logits) or None (fallback to eager).
         """
         return self._entries.get(seq_lens)
+
+    def get_graph_with_padding(self, B: int) -> tuple[torch.cuda.CUDAGraph | None, torch.Tensor | None, int]:
+        """Get CUDA Graph for actual batch size B, with optional padding.
+
+        Returns (graph, output_logits, padded_B) or (None, None, B) for eager fallback.
+        padded_B == B means no padding.
+        """
+        padded_B = self._bs_to_padded.get(B)
+        if padded_B is None or padded_B > self._max_batch_size:
+            return None, None, B
+
+        seq_lens = tuple([1] * padded_B)
+        entry = self._entries.get(seq_lens)
+        if entry is None:
+            return None, None, B
+        return entry[0], entry[1], padded_B
 
     def _capture_for_shape(
         self,

@@ -41,6 +41,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # CUDA Graph arguments
     parser.add_argument("--cudagraph-mode", default="full", choices=["full", "none"], help="CUDA Graph mode")
+    parser.add_argument(
+        "--cudagraph-capture-size",
+        default=None,
+        help="CUDA Graph capture sizes as comma-separated integers (e.g. '1,2,4,8,16,32,64'). If not specified, defaults are computed from max-num-seqs.",
+    )
 
     # Server arguments
     parser.add_argument("--host", default="0.0.0.0", help="API server host")
@@ -64,6 +69,11 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    # Parse cudagraph capture sizes
+    cudagraph_capture_size = None
+    if args.cudagraph_capture_size:
+        cudagraph_capture_size = [int(x.strip()) for x in args.cudagraph_capture_size.split(",")]
+
     engine_args = EngineArgs(
         model=args.model,
         tokenizer=args.tokenizer,
@@ -76,6 +86,7 @@ def main() -> None:
         max_num_seqs=args.max_num_seqs,
         gpu_memory_utilization=args.gpu_memory_utilization,
         enforce_eager=args.enforce_eager,
+        cudagraph_capture_size=cudagraph_capture_size,
         cudagraph_mode=args.cudagraph_mode,
         default_max_tokens=args.max_tokens,
         enable_multiprocessing=not args.disable_multiprocessing,

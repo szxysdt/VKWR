@@ -2,7 +2,7 @@
 #include <torch/library.h>
 
 #include "core/register.h"
-#include "v1/common/v1_check.h"
+#include "v1_check.h"
 #include "norm_ops.h"
 
 torch::Tensor layer_norm_f16_fn(torch::Tensor x, torch::Tensor weight, torch::Tensor bias, double eps) {

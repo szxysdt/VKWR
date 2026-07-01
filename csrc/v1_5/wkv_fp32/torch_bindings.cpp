@@ -2,7 +2,7 @@
 #include <torch/library.h>
 
 #include "core/register.h"
-#include "v1/common/v1_check.h"
+#include "v1_check.h"
 #include "wkv_fp32_v2.h"
 
 namespace {

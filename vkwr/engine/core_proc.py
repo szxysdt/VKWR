@@ -141,10 +141,7 @@ class EngineCoreProc(EngineCore):
                 try:
                     self._process_engine_step()
                 except Exception:
-                    logger.exception(
-                        "EngineCore step failed — aborting all in-flight "
-                        "requests to avoid hanging clients"
-                    )
+                    logger.exception("EngineCore step failed — aborting all in-flight requests to avoid hanging clients")
                     aborted = self.scheduler.finish_requests(None, RequestStatus.FINISHED_ABORTED)
                     if aborted:
                         self._send_abort_outputs(aborted)
@@ -357,6 +354,12 @@ def _core_proc_target(
 ):
     """Target function for background EngineCore process."""
     import torch
+
+    if not logging.root.handlers:
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        )
 
     if isinstance(device, str):
         device_idx = 0 if device == "cuda" else int(device.split(":")[-1])

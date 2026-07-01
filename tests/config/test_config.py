@@ -157,21 +157,28 @@ class TestHashFactors:
 class TestGetDefaultCudagraphCaptureSizes:
     def test_small_max_seqs(self):
         sizes = get_default_cudagraph_capture_sizes(4, 8)
-        # max_size = min(4, 512) = 4, capped by min(4, 8) = 4
-        # consecutive list: [1, 2, 3, 4]
-        assert sizes == [1, 2, 3, 4]
+        # max_size = min(4, 512, 8) = 4
+        # sparse: [1, 2, 4], filtered <=4: [1, 2, 4]
+        assert sizes == [1, 2, 4]
 
     def test_medium_max_seqs(self):
         sizes = get_default_cudagraph_capture_sizes(16, 128)
-        # max_size = min(16, 512) = 16, capped by min(16, 128) = 16
-        # consecutive list: [1, 2, ..., 16]
-        assert sizes == list(range(1, 17))
+        # max_size = min(16, 512, 128) = 16
+        # sparse: [1, 2, 4] + range(8, 17, 8) = [1, 2, 4, 8, 16]
+        assert sizes == [1, 2, 4, 8, 16]
 
     def test_large_max_seqs(self):
         sizes = get_default_cudagraph_capture_sizes(128, 2048)
-        # max_size = min(128, 512) = 128, capped by min(128, 2048) = 128
-        # consecutive list: [1, 2, ..., 128]
-        assert sizes == list(range(1, 129))
+        # max_size = min(128, 512, 2048) = 128
+        # sparse: [1, 2, 4] + range(8, 129, 8) = [1, 2, 4, 8, ..., 128]
+        assert sizes == [1, 2, 4] + list(range(8, 129, 8))
+
+    def test_96_max_seqs(self):
+        sizes = get_default_cudagraph_capture_sizes(96, 2048)
+        # max_size = 96
+        # [1, 2, 4] + range(8, 97, 8) = [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96]
+        assert sizes == [1, 2, 4, 8, 16, 24, 32, 40, 48, 56, 64, 72, 80, 88, 96]
+        assert len(sizes) == 15
 
     def test_zero_returns_empty(self):
         sizes = get_default_cudagraph_capture_sizes(0, 0)
@@ -179,7 +186,14 @@ class TestGetDefaultCudagraphCaptureSizes:
 
     def test_includes_max_num_batched_tokens(self):
         sizes = get_default_cudagraph_capture_sizes(100, 100)
+        # max_size = 100, max_size must be in the list
         assert 100 in sizes
+
+    def test_256_max_seqs(self):
+        sizes = get_default_cudagraph_capture_sizes(256, 4096)
+        # max_size = 256
+        # [1, 2, 4] + range(8, 256, 8) + [256]
+        assert sizes == [1, 2, 4] + list(range(8, 256, 8)) + [256]
 
 
 # ── ModelConfig ───────────────────────────────────────────────────────
