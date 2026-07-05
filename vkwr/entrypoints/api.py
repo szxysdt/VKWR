@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 # ─── Request models ────────────────────────────────────────────────
 
 
+class StreamOptions(BaseModel):
+    include_usage: bool = False
+
+
 class CompletionRequest(BaseModel):
     """OpenAI-compatible /v1/completions request body."""
 
@@ -39,6 +43,7 @@ class CompletionRequest(BaseModel):
     stop: list[str] | None = None
     stop_token_ids: list[int] | None = None
     stream: bool = False
+    stream_options: StreamOptions | None = None
     seed: int | None = None
 
 
@@ -60,6 +65,7 @@ class ChatCompletionRequest(BaseModel):
     stop: list[str] | None = None
     stop_token_ids: list[int] | None = None
     stream: bool = False
+    stream_options: StreamOptions | None = None
     seed: int | None = None
 
 
@@ -74,11 +80,20 @@ def _make_completion_response(
     prompt_tokens: int,
     completion_tokens: int,
     created: int | None = None,
+    system_fingerprint: str | None = None,
+    num_cached_tokens: int | None = None,
 ) -> dict:
     """Build an OpenAI text_completion-formatted response."""
     if created is None:
         created = int(time.time())
-    return {
+    usage = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+    if num_cached_tokens is not None:
+        usage["prompt_tokens_details"] = {"cached_tokens": num_cached_tokens}
+    resp: dict = {
         "id": f"cmpl-{request_id}",
         "object": "text_completion",
         "created": created,
@@ -91,12 +106,11 @@ def _make_completion_response(
                 "finish_reason": finish_reason,
             }
         ],
-        "usage": {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-        },
+        "usage": usage,
     }
+    if system_fingerprint is not None:
+        resp["system_fingerprint"] = system_fingerprint
+    return resp
 
 
 def _make_chat_completion_response(
@@ -107,11 +121,20 @@ def _make_chat_completion_response(
     prompt_tokens: int,
     completion_tokens: int,
     created: int | None = None,
+    system_fingerprint: str | None = None,
+    num_cached_tokens: int | None = None,
 ) -> dict:
     """Build an OpenAI chat.completion-formatted response."""
     if created is None:
         created = int(time.time())
-    return {
+    usage = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": prompt_tokens + completion_tokens,
+    }
+    if num_cached_tokens is not None:
+        usage["prompt_tokens_details"] = {"cached_tokens": num_cached_tokens}
+    resp: dict = {
         "id": f"chatcmpl-{request_id}",
         "object": "chat.completion",
         "created": created,
@@ -127,12 +150,11 @@ def _make_chat_completion_response(
                 "finish_reason": finish_reason,
             }
         ],
-        "usage": {
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "total_tokens": prompt_tokens + completion_tokens,
-        },
+        "usage": usage,
     }
+    if system_fingerprint is not None:
+        resp["system_fingerprint"] = system_fingerprint
+    return resp
 
 
 def _make_completion_chunk(
@@ -141,11 +163,13 @@ def _make_completion_chunk(
     finish_reason: str | None,
     model: str,
     created: int | None = None,
+    system_fingerprint: str | None = None,
+    usage: dict | None = None,
 ) -> str:
     """Build an SSE streaming delta chunk (text_completion)."""
     if created is None:
         created = int(time.time())
-    chunk = {
+    chunk: dict = {
         "id": f"cmpl-{request_id}",
         "object": "text_completion",
         "created": created,
@@ -159,6 +183,10 @@ def _make_completion_chunk(
             }
         ],
     }
+    if system_fingerprint is not None:
+        chunk["system_fingerprint"] = system_fingerprint
+    if usage is not None:
+        chunk["usage"] = usage
     return f"data: {json.dumps(chunk)}\n\n"
 
 
@@ -169,6 +197,7 @@ def _make_chat_completion_chunk(
     model: str,
     created: int | None = None,
     is_first: bool = False,
+    system_fingerprint: str | None = None,
     usage: dict | None = None,
 ) -> str:
     """Build an SSE streaming delta chunk (chat.completion)."""
@@ -190,6 +219,8 @@ def _make_chat_completion_chunk(
             }
         ],
     }
+    if system_fingerprint is not None:
+        chunk["system_fingerprint"] = system_fingerprint
     if usage is not None:
         chunk["usage"] = usage
     return f"data: {json.dumps(chunk)}\n\n"
@@ -230,19 +261,52 @@ async def _stream_completion(
     prompt: str | list[int],
     sampling_params: SamplingParams,
     model: str,
+    *,
+    system_fingerprint: str | None = None,
+    stream_options: StreamOptions | None = None,
 ) -> StreamingResponse:
     """Stream a completion generation (text_completion)."""
     created = int(time.time())
     req_id = generate_request_id("stream")
+    include_usage = stream_options is not None and stream_options.include_usage
 
     async def event_generator():
         last_out = None
+        total_completion_tokens = 0
         try:
             async for out in async_engine.generate(prompt, sampling_params, req_id):
                 text = out.outputs[0].text if out.outputs else ""
-                delta = _make_completion_chunk(req_id, text, out.finish_reason, model, created)
-                yield delta
+                if out.outputs:
+                    total_completion_tokens += len(out.outputs[0].token_ids)
                 last_out = out
+
+                if out.finished and include_usage:
+                    prompt_len = len(out.prompt_token_ids)
+                    usage = {
+                        "prompt_tokens": prompt_len,
+                        "completion_tokens": total_completion_tokens,
+                        "total_tokens": prompt_len + total_completion_tokens,
+                    }
+                    yield _make_completion_chunk(
+                        req_id,
+                        text,
+                        out.finish_reason,
+                        model,
+                        created,
+                        system_fingerprint=system_fingerprint,
+                        usage=usage,
+                    )
+                elif out.finished:
+                    yield _make_completion_chunk(
+                        req_id,
+                        text,
+                        out.finish_reason,
+                        model,
+                        created,
+                        system_fingerprint=system_fingerprint,
+                    )
+                else:
+                    yield _make_completion_chunk(req_id, text, out.finish_reason, model, created)
         except EngineDeadError:
             yield _make_completion_chunk(req_id, "", "error", model, created)
             return
@@ -250,18 +314,20 @@ async def _stream_completion(
             yield _make_completion_chunk(req_id, "", "error", model, created)
             return
 
-        if last_out is not None:
+        if last_out is not None and not include_usage:
             prompt_len = len(last_out.prompt_token_ids)
-            completion_len = len(last_out.outputs[0].token_ids) if last_out.outputs else 0
             usage_chunk = {
                 "id": f"cmpl-{req_id}",
                 "object": "text_completion",
+                "choices": [],
                 "usage": {
                     "prompt_tokens": prompt_len,
-                    "completion_tokens": completion_len,
-                    "total_tokens": prompt_len + completion_len,
+                    "completion_tokens": total_completion_tokens,
+                    "total_tokens": prompt_len + total_completion_tokens,
                 },
             }
+            if system_fingerprint is not None:
+                usage_chunk["system_fingerprint"] = system_fingerprint
             yield f"data: {json.dumps(usage_chunk)}\n\n"
 
         yield "data: [DONE]\n\n"
@@ -274,36 +340,104 @@ async def _stream_chat_completion(
     prompt: str,
     sampling_params: SamplingParams,
     model: str,
+    *,
+    system_fingerprint: str | None = None,
+    stream_options: StreamOptions | None = None,
 ) -> StreamingResponse:
     """Stream a chat completion generation (chat.completion)."""
     created = int(time.time())
     req_id = generate_request_id("stream-chat")
+    include_usage = stream_options is not None and stream_options.include_usage
 
     async def event_generator():
-        yield _make_chat_completion_chunk(req_id, "", None, model, created, is_first=True)
+        yield _make_chat_completion_chunk(
+            req_id,
+            "",
+            None,
+            model,
+            created,
+            is_first=True,
+        )
         last_out = None
+        total_completion_tokens = 0
         try:
             async for out in async_engine.generate(prompt, sampling_params, req_id):
                 text = out.outputs[0].text if out.outputs else ""
-                delta = _make_chat_completion_chunk(req_id, text, out.finish_reason, model, created)
-                yield delta
+                if out.outputs:
+                    total_completion_tokens += len(out.outputs[0].token_ids)
                 last_out = out
+
+                if out.finished and include_usage:
+                    prompt_len = len(out.prompt_token_ids)
+                    usage = {
+                        "prompt_tokens": prompt_len,
+                        "completion_tokens": total_completion_tokens,
+                        "total_tokens": prompt_len + total_completion_tokens,
+                    }
+                    yield _make_chat_completion_chunk(
+                        req_id,
+                        text,
+                        out.finish_reason,
+                        model,
+                        created,
+                        system_fingerprint=system_fingerprint,
+                        usage=usage,
+                    )
+                elif out.finished:
+                    yield _make_chat_completion_chunk(
+                        req_id,
+                        text,
+                        out.finish_reason,
+                        model,
+                        created,
+                        system_fingerprint=system_fingerprint,
+                    )
+                else:
+                    yield _make_chat_completion_chunk(
+                        req_id,
+                        text,
+                        out.finish_reason,
+                        model,
+                        created,
+                    )
         except EngineDeadError:
-            yield _make_chat_completion_chunk(req_id, "", "error", model, created)
+            yield _make_chat_completion_chunk(
+                req_id,
+                "",
+                "error",
+                model,
+                created,
+                system_fingerprint=system_fingerprint,
+            )
             return
         except EngineGenerateError:
-            yield _make_chat_completion_chunk(req_id, "", "error", model, created)
+            yield _make_chat_completion_chunk(
+                req_id,
+                "",
+                "error",
+                model,
+                created,
+                system_fingerprint=system_fingerprint,
+            )
             return
 
-        if last_out is not None:
+        if last_out is not None and not include_usage:
             prompt_len = len(last_out.prompt_token_ids)
-            completion_len = len(last_out.outputs[0].token_ids) if last_out.outputs else 0
-            usage = {
-                "prompt_tokens": prompt_len,
-                "completion_tokens": completion_len,
-                "total_tokens": prompt_len + completion_len,
+            trailing_usage_chunk = {
+                "id": f"chatcmpl-{req_id}",
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [],
+                "usage": {
+                    "prompt_tokens": prompt_len,
+                    "completion_tokens": total_completion_tokens,
+                    "total_tokens": prompt_len + total_completion_tokens,
+                },
             }
-            yield _make_chat_completion_chunk(req_id, "", None, model, created, usage=usage)
+            if system_fingerprint is not None:
+                trailing_usage_chunk["system_fingerprint"] = system_fingerprint
+            yield f"data: {json.dumps(trailing_usage_chunk)}\n\n"
 
         yield "data: [DONE]\n\n"
 
@@ -347,6 +481,7 @@ def create_app(engine_args: EngineArgs) -> FastAPI:
         yield
         await async_engine.shutdown()
 
+    system_fingerprint = f"vkwr-{engine_args.model.split('/')[-1]}"
     app = FastAPI(title="VKWR API", version="0.1.0", lifespan=lifespan)
 
     @app.get("/v1/models")
@@ -373,7 +508,14 @@ def create_app(engine_args: EngineArgs) -> FastAPI:
         )
 
         if req.stream:
-            return await _stream_completion(async_engine, req.prompt, sampling_params, req.model)
+            return await _stream_completion(
+                async_engine,
+                req.prompt,
+                sampling_params,
+                req.model,
+                system_fingerprint=system_fingerprint,
+                stream_options=req.stream_options,
+            )
 
         try:
             out = await _collect_completion(async_engine, req.prompt, sampling_params)
@@ -395,6 +537,7 @@ def create_app(engine_args: EngineArgs) -> FastAPI:
             req.model,
             prompt_len,
             completion_len,
+            system_fingerprint=system_fingerprint,
         )
 
     @app.post("/v1/chat/completions")
@@ -424,7 +567,14 @@ def create_app(engine_args: EngineArgs) -> FastAPI:
         )
 
         if req.stream:
-            return await _stream_chat_completion(async_engine, prompt, sampling_params, req.model)
+            return await _stream_chat_completion(
+                async_engine,
+                prompt,
+                sampling_params,
+                req.model,
+                system_fingerprint=system_fingerprint,
+                stream_options=req.stream_options,
+            )
 
         try:
             out = await _collect_completion(async_engine, prompt, sampling_params)
@@ -446,6 +596,7 @@ def create_app(engine_args: EngineArgs) -> FastAPI:
             req.model,
             prompt_len,
             completion_len,
+            system_fingerprint=system_fingerprint,
         )
 
     return app
